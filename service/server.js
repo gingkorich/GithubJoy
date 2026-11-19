@@ -69,6 +69,7 @@ function dashboard() {
       lastAt: ls.at, added: ls.added, scanned: ls.scanned, durationMs: ls.durationMs,
       totalUnreadAfter: ls.totalUnreadAfter, runId: ls.runId,
     } : null,
+    read: st.lastRead || null,
     unread: st.unreadTotal || null,
     queue: counts,
   };
@@ -557,6 +558,65 @@ async function startScan(dryRun) {
   return { jobId: id };
 }
 
+async function startRead(opts) {
+  const rawN = (opts.n === undefined || opts.n === null || opts.n === '') ? 5 : opts.n;
+  const n = Number(rawN);
+  if (!Number.isInteger(n) || n < 1 || n > 20) return { error: 'bad_n' };
+  if (job && job.state === 'running') return { busy: true, jobId: job.id };
+
+  const now = new Date();
+  const id = 'read-' + stamp(now);
+  job = {
+    id, kind: 'read', state: 'running',
+    startedAt: now.toISOString(), endedAt: null,
+    exitCode: null, error: null, progress: { phase: 'start', done: 0, total: n },
+    result: null, lines: [],
+    options: { n, lite: !!opts.lite, noWrite: !!opts.noWrite, dryRun: !!opts.dryRun },
+  };
+  persistJob();
+
+  const resultFile = path.join(JOBS, id + '.result.json');
+  const argv = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(ROOT, 'scripts', 'read.ps1'),
+    '-N', String(n), '-JsonOut', resultFile,
+    '-LogFile', path.join(ROOT, 'logs', 'read-' + stamp(now) + '.log')];
+  if (opts.dryRun) argv.push('-DryRun');
+  if (opts.noWrite) argv.push('-NoWrite');
+  if (opts.lite) argv.push('-Lite');
+
+  const child = spawn('powershell.exe', argv, {
+    stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: childEnv(),
+  });
+  job.pid = child.pid;
+  child.stdout.on('data', pushLine);
+  child.stderr.on('data', pushLine);
+
+  const timer = setTimeout(() => {
+    if (job && job.state === 'running') {
+      job.error = 'timeout_3600s';
+      try { execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], () => {}); } catch (_) {}
+    }
+  }, 60 * 60 * 1000);
+
+  child.on('close', (code) => {
+    clearTimeout(timer);
+    if (!job || job.state !== 'running') return;
+    job.endedAt = new Date().toISOString();
+    job.exitCode = code;
+    const res = readJsonFile(resultFile, null);
+    if (res) {
+      job.result = res;
+      if (res.error) job.error = String(res.error);
+      if (res.hint) job.hintText = String(res.hint);
+    }
+    if (code !== 0 && !job.error) job.error = 'exit_' + code;
+    job.state = (code === 0 && !(res && res.ok === false)) ? 'succeeded' : 'failed';
+    statusCache.value = null;
+    persistJob();
+  });
+
+  return { jobId: id };
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -679,6 +739,18 @@ const server = http.createServer(async (req, res) => {
 
     // Remaining endpoints are actions: require the local token.
     if (!tokenOk(req)) return sendJson(res, 403, { error: 'bad_token' });
+
+    if (p === '/api/read' && req.method === 'POST') {
+      let body = {};
+      try {
+        const raw = await readBody(req);
+        body = raw && raw.trim() ? JSON.parse(raw) : {};
+      } catch (_) { /* empty body is fine */ }
+      const r = await startRead(body);
+      if (r.error === 'bad_n') return sendJson(res, 400, { error: 'n must be 1-20' });
+      if (r.busy) return sendJson(res, 409, { error: 'busy', jobId: r.jobId });
+      return sendJson(res, 202, { jobId: r.jobId });
+    }
 
     if (p === '/api/llm' && req.method === 'GET') {
       return sendJson(res, 200, llmView());

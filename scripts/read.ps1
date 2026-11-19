@@ -113,6 +113,14 @@ if (-not $queue -or -not ($queue.PSObject.Properties.Name -contains 'items')) {
   Fail-JoyRead 1 'queue.json missing' 'Run scan first'
 }
 $all = @($queue.items | Sort-Object seq)
+
+# reset items left in summarizing by a cancelled/interrupted run
+$stale = @($queue.items | Where-Object { [string]$_.status -eq 'summarizing' })
+if ($stale.Count -gt 0) {
+  foreach ($it in $stale) { $it.status = 'pending'; $it.lastError = 'interrupted' }
+  Save-Queue $queue
+  Write-JoyLog ("reset {0} interrupted item(s) to pending" -f $stale.Count) 'WARN'
+}
 $wanted = @()
 if ($OnlyId) {
   $wanted = @($all | Where-Object {

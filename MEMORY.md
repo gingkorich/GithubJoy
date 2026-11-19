@@ -193,6 +193,12 @@ M2 扫描（2026-11-19，DryRun 通过）：
 
 阈值 v3（2026-11-19）：today >100 / week >2000 / month >5000。实测 totalCount 2 / 5 / 30，去重 37；已 unread 19、已 star 1；剩余 17 全部入选（month 12 + 补齐 5），无 capped；计划 star 17、unread 60→77。
 
+M3d 控制台阅读按钮（2026-11-19）：
+- `POST /api/read`（`{n,lite,noWrite,dryRun}`），页面「阅读」卡：数量 1–20、Lite、不写盘、上次阅读/待读；
+- 与扫描共用单任务槽；进度、日志、结果摘要（成功/失败/跳过/Q&A 总数）复用任务卡；
+- 修 bug：`opts.n || 5` 会把 0 变成 5 并触发真实阅读 → 改为显式 undefined 判断，n 越界返回 400；已取消误触发的任务；
+- 加固：`read.ps1` 启动时把遗留的 `summarizing` 条目重置为 `pending`（中断恢复）；
+- 实测：DryRun n=2 → selected 2；NoWrite n=1（sfewer CVE）→ 1 成功、1 次 LLM、队列无变化。
 M3b 阅读与总结（2026-11-19）：
 - 新增 `scripts/read.ps1`、`scripts/lib/llm.ps1`、`scripts/prompts/*`（system/user/repair/cliches）、`run-joy.bat`；
 - 流程：选 pending 前 n（或 OnlyId/IdsFile）→ `summarizing` → 抓 repo/README/目录树（deep 另抓 3–5 关键文件）→ LLM → 校验/修复 → 写 `data/summaries/<o>__<r>.json` → 队列 `done`；

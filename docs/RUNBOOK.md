@@ -836,4 +836,5 @@ git pull --ff-only
 | 阈值 100/2000/5000（DryRun） | ✅ 已回填（2026-11-19）：候选 37、已 unread 19、已 star 1、入选 17（month 12 + 补齐 5）、计划 star 17 |
 | `read.ps1 -NoLlm -NoWrite` | ✅ 已回填（2026-11-19）：README 4339 字符、目录树 16 项、lite 不取关键文件 |
 | `read.ps1 -OnlyId ... -Lite`（真实） | ✅ 已回填（2026-11-19）：overview 126 字、Q&A 6 组、warnings 0；summary 落盘、队列置 done、state.lastRead 更新 |
+| 控制台「阅读」按钮（`/api/read`） | ✅ 已回填（2026-11-19）：DryRun n=2 通过；NoWrite n=1 真实调用成功（1 成功 / 0 失败 / 1 次 LLM）；n=0 返回 400 |
 | AC-1～AC-14 实测结果 | M2–M5 逐条 |

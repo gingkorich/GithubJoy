@@ -4,7 +4,7 @@
 
 ## 状态
 
-**需求 + 设计 + 手册 v1.2；M1/M2/M3a 完成，M3b 阅读单条跑通，发布/渲染未实现。** 文档：[`REQUIREMENTS.md`](docs/REQUIREMENTS.md)、[`DESIGN.md`](docs/DESIGN.md)、[`RUNBOOK.md`](docs/RUNBOOK.md)。当前可运行：双击 `joy.bat` 起本地服务（`http://127.0.0.1:8787/`），页面可看 gh 状态、自动探测系统代理、设备码登录/退出、探测 Lists、配置模型并测试连接；`scan.bat` 扫描；`run-joy.bat` 阅读并生成 summary（`-DryRun` / `-NoWrite` / `-NoLlm` / `-Lite`）。技术核实见 [`MEMORY.md`](MEMORY.md)，代理约定见 [`AGENTS.md`](AGENTS.md)。
+**需求 + 设计 + 手册 v1.2；M1/M2/M3 完成（含控制台扫描与阅读按钮），M4 渲染/发布未实现。** 文档：[`REQUIREMENTS.md`](docs/REQUIREMENTS.md)、[`DESIGN.md`](docs/DESIGN.md)、[`RUNBOOK.md`](docs/RUNBOOK.md)。当前可运行：双击 `joy.bat` 起本地服务（`http://127.0.0.1:8787/`），页面可扫描、阅读 n 个、看进度与统计、配置模型；命令行 `scan.bat` / `run-joy.bat` 等价可用。
 
 ## 讨论结论速览
 

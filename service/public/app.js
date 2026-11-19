@@ -69,6 +69,15 @@ function renderStatus(s) {
   setText('queueStat',
     '待读 ' + (q.pending || 0) + ' / 完成 ' + (q.done || 0) +
     ' / 失败 ' + (q.failed || 0) + ' / 已读 ' + (q.moved || 0));
+  setText('readPending', q.pending || 0);
+
+  const rd = s.read;
+  if (rd) {
+    setText('lastRead', 'n=' + rd.n + '，成功 ' + rd.succeeded + '，失败 ' + rd.failed + '（' + relTime(rd.at) + '）');
+  } else {
+    setText('lastRead', '尚未阅读');
+  }
+  $('btnRead').disabled = !!(s.job && s.job.state === 'running');
 
   const g = s.gh || {};
   const llm = s.llm || {};
@@ -101,7 +110,8 @@ function renderJob(j) {
   $('jobCard').hidden = false;
   $('jobState').textContent = j.state;
   $('jobState').className = 'tag ' + j.state;
-  $('jobKind').textContent = j.kind === 'scan' ? (j.dryRun ? '扫描·干跑' : '扫描') : 'gh 登录';
+  $('jobKind').textContent = j.kind === 'scan' ? (j.dryRun ? '扫描·干跑' : '扫描')
+    : (j.kind === 'read' ? '阅读' : 'gh 登录');
   $('codeLine').hidden = !(j.kind === 'gh-login' && j.code);
   setText('jobCode', j.code);
 
@@ -115,6 +125,13 @@ function renderJob(j) {
       (r.ensured ? '，补回 ' + r.ensured : '') +
       '，star ' + (r.starred || 0) + (r.unreadCount != null ? '，unread ' + r.unreadCount + '→' + r.totalUnreadAfter : '');
   }
+  if (j.result && j.kind === 'read') {
+    const r = j.result;
+    let qaTotal = 0;
+    for (const x of (r.items || [])) qaTotal += (x.qaCount || 0);
+    progress = '阅读' + (r.noWrite ? '（不写盘）' : '') + '：成功 ' + r.succeeded +
+      '，失败 ' + r.failed + '，跳过 ' + r.skipped + '，Q&A 共 ' + qaTotal + ' 组';
+  }
   setText('jobProgress', progress);
 
   const hint = $('jobHint');
@@ -124,6 +141,7 @@ function renderJob(j) {
   $('btnCancel').hidden = j.state !== 'running';
   $('btnLogin').disabled = j.state === 'running' || $('btnLogin').disabled;
   $('btnScan').disabled = j.state === 'running';
+  $('btnRead').disabled = j.state === 'running';
 
   if (j.state === 'running') {
     if (!pollTimer) pollTimer = setInterval(refresh, 1000);
@@ -170,6 +188,28 @@ $('btnScan').addEventListener('click', async () => {
   } catch (e) {
     alert('发起扫描失败：' + e.message);
     $('btnScan').disabled = false;
+  }
+});
+
+$('btnRead').addEventListener('click', async () => {
+  const n = Number($('readN').value || 5);
+  if (!Number.isInteger(n) || n < 1 || n > 20) {
+    alert('数量必须是 1–20 的整数');
+    return;
+  }
+  const body = { n: n, lite: $('chkLite').checked, noWrite: $('chkNoWrite').checked };
+  try {
+    $('btnRead').disabled = true;
+    const r = await api('/api/read', { method: 'POST', body: JSON.stringify(body) });
+    activeJob = {
+      id: r.jobId, kind: 'read', state: 'running', lines: [],
+      progress: { phase: 'start', done: 0, total: n },
+    };
+    renderJob(activeJob);
+    pollTimer = setInterval(refresh, 1000);
+  } catch (e) {
+    alert('发起阅读失败：' + e.message);
+    $('btnRead').disabled = false;
   }
 });
 

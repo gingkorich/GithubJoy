@@ -528,6 +528,7 @@ server.listen(port, '127.0.0.1', () => {
 | GET | `/app.js`、`/style.css` | — | 静态资源（白名单扩展名） |
 | GET | `/api/status` | — | 见下方示例 |
 | POST | `/api/scan` | `{}` | `202 { "jobId": "scan-…" }`；已有任务 → `409 {error:"busy"}` |
+| POST | `/api/read` | `{"n":5,"lite":false,"noWrite":false,"dryRun":false}` | `202 {jobId}`；`n` 不在 1–20 → `400` |
 | POST | `/api/read` | `{"n":5,"noPublish":false}` | `202 {jobId}`；`n` 越界 → `400` |
 | GET | `/api/jobs/<id>` | `?tail=200` | `{ job, lines:[…] }` |
 | POST | `/api/jobs/<id>/cancel` | — | `200 {state:"cancelled"}` |
@@ -612,7 +613,7 @@ spawn('powershell.exe', ['-NoProfile','-ExecutionPolicy','Bypass','-File','scrip
 ```
 ┌─ header: 登录名 / GitHub 主页 ↗ | 服务版本 | 数据目录 ─────────┐
 ├─ 概览卡片（4 格）：上次扫描 | 本次新增 unread | 累计 unread | 待读 ─┤
-├─ 操作区： [立即扫描]   [阅读 __ 个]   ← 运行中显示进度条 + 日志尾部 ─┤
+├─ 操作区： [立即扫描]   [阅读 __ 个] [Lite] [不写盘]   ← 运行中显示进度 + 日志 ─┤
 ├─ 报告列表：文件名 | 生成时间 | 大小 | 条目数 | 已发布 | 打开 ───────┤
 ├─ 账号区： [使用 GitHub 登录] / 用户名 + [退出登录] ────────────────┤
 └─ 模型区： base_url | model | api_key(密码) | [保存] [测试连接] ─────┘

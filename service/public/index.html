@@ -58,6 +58,21 @@
   </section>
 
   <section class="card">
+    <h2>阅读</h2>
+    <dl class="kv">
+      <dt>上次阅读</dt><dd id="lastRead">—</dd>
+      <dt>待读</dt><dd id="readPending">—</dd>
+    </dl>
+    <div class="row">
+      <label class="chk">数量 <input id="readN" type="number" min="1" max="20" value="5"></label>
+      <button id="btnRead">阅读</button>
+      <label class="chk"><input type="checkbox" id="chkLite"> Lite（不读源码）</label>
+      <label class="chk"><input type="checkbox" id="chkNoWrite"> 不写盘</label>
+    </div>
+    <p class="hint">Deep 默认另读 3–5 个关键文件；推理模型单条约 1–2 分钟。</p>
+  </section>
+
+  <section class="card">
     <h2>模型</h2>
     <dl class="kv">
       <dt>状态</dt><dd id="llmState">—</dd>

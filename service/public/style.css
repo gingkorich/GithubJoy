@@ -134,6 +134,14 @@ button.ghost {
   user-select: none;
 }
 .chk input { accent-color: var(--accent); }
+.chk input[type=number] {
+  width: 64px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--fg);
+}
 
 .code-line { margin: 0 0 8px; }
 .code-line strong {
