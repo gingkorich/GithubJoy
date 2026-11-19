@@ -42,7 +42,10 @@ function Invoke-JoyHttp {
         TimeoutSec = $TimeoutSec
         UserAgent = $script:JoyUA
       }
-      if ($Body) { $p['Body'] = $Body; $p['ContentType'] = 'application/json; charset=utf-8' }
+      if ($Body) {
+        $p['Body'] = [Text.Encoding]::UTF8.GetBytes([string]$Body)
+        $p['ContentType'] = 'application/json; charset=utf-8'
+      }
       if ($Proxy) { $p['Proxy'] = $Proxy }
       $resp = Invoke-WebRequest @p
       $text = [Text.Encoding]::UTF8.GetString($resp.RawContentStream.ToArray())

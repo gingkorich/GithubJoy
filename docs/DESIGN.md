@@ -454,7 +454,7 @@ deep: 取 top 3–5；lite: 取 0
 | 空话（「非常优秀」「值得一试」单独成句） | 重问 |
 
 - 内容审核 / 安全拦截：输入 60% → 30% 逐级降级；每次降级写 `warnings` 与 `moderation.log`，仍失败则该条 `failed`（不写空 summary）。
-- `temperature` 默认 0.2；服务端 400 报不支持该参数时去掉重试一次。
+- `temperature` **默认不发送**（只有 `llm.json` 显式配置时才带）；若服务端仍返回 400 提示不支持该参数，去掉后重试一次。推理模型可能把 `max_tokens` 全用在 `reasoning_content` 上，导致 `content` 为空或被截断，客户端会自动翻倍预算（最多 12000）重试。
 - 网络类失败（超时 / 5xx / 429）按 2s / 4s / 8s 退避，最多 3 次。
 
 ### 5.4 迁移（FR-7，依赖 4.5 的替换语义）
@@ -943,6 +943,7 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 | D8 | `config.json` 入库（非密钥） | FR-10 表格 | 便于复现与 review；密钥仍在 `gh.json` / `llm.json` |
 | D9 | 脚本向 stdout 输出单行 JSON 进度事件 | 需求未规定 | 服务需要展示阶段与进度 |
 | D10 | M1 阶段的 gh 状态由 Node 直接调用 `gh auth status --json` 提供；`status.ps1` 顺延到 M2（需要 unread 总数时） | DESIGN 2 目录树 | 少一层进程转发；GitHub API 仍未进入 Node，认证逻辑依旧只在 gh / PowerShell 侧 |
+| D11 | `read.ps1` 增加 `-NoWrite`（抓材料 + 调模型但不落盘）与 `-NoLlm`（只抓材料）两个试跑开关；`-NoPublish` 在 M3b 阶段暂不生效 | DESIGN 5.1（渲染/发布属 M4） | 先验证材料与 JSON 质量，避免把半成品写入队列 |
 
 ---
 

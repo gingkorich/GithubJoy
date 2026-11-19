@@ -781,6 +781,8 @@ git pull --ff-only
 | 读 n 个（发布 + 迁移） | `.\run-joy.bat 5` |
 | 只生成页面 | `.\run-joy.bat 3 -NoPublish` |
 | 单条重试 | `.\run-joy.bat -OnlyId owner/name` |
+| 只抓材料（不调模型、不写盘） | `.\run-joy.bat -OnlyId owner/name -Lite -NoLlm -NoWrite` |
+| 调模型但不写盘 | `.\run-joy.bat -OnlyId owner/name -Lite -NoWrite` |
 | 批量补读 | `.\run-joy.bat -IdsFile ids.txt -NoPublish` |
 | 省钱模式 | `.\run-joy.bat 2 -Lite` |
 | 一致性修复 | `.\run-joy.bat -Repair -DryRun` |
@@ -832,4 +834,6 @@ git pull --ff-only
 | 新入选规则（阈值 80/1000/3000，配额 5/8/12，star 过滤） | ✅ DryRun 已回填（2026-11-19）：候选 43、选中 25、计划 star 25；today 5 条已在 unread 故配额顺延补齐 |
 | 控制台扫描按钮（`/api/scan` + 干跑开关） | ✅ 已回填（2026-11-19）：任务进度、结果与页面统计联调通过（DryRun：added 20 / ensured 5 / star 25） |
 | 阈值 100/2000/5000（DryRun） | ✅ 已回填（2026-11-19）：候选 37、已 unread 19、已 star 1、入选 17（month 12 + 补齐 5）、计划 star 17 |
+| `read.ps1 -NoLlm -NoWrite` | ✅ 已回填（2026-11-19）：README 4339 字符、目录树 16 项、lite 不取关键文件 |
+| `read.ps1 -OnlyId ... -Lite`（真实） | ✅ 已回填（2026-11-19）：overview 126 字、Q&A 6 组、warnings 0；summary 落盘、队列置 done、state.lastRead 更新 |
 | AC-1～AC-14 实测结果 | M2–M5 逐条 |

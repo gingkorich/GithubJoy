@@ -8,7 +8,7 @@ GitHub Trending 每日简报：扫描 today / week / month 榜单 → 未收藏�
 
 ## 当前状态
 
-- 阶段：**文档三件套 v1.2；M1 通过；M2 扫描与扫描按钮完成；M3a 模型配置完成（`/api/llm` + 页面），`read.ps1` 未实现**。
+- 阶段：**文档三件套 v1.2；M1/M2 完成；M3a 模型配置完成；M3b `read.ps1` 已实现并单条真实跑通（summary + 队列 done），控制台「阅读 n 个」按钮未接**。
 - 已有：`MEMORY.md`、`docs/*`；代码：`joy.bat`、`scan.bat`、`service/*`（扫描按钮 + 进度 + 概览）、`scripts/scan.ps1`、`scripts/lib/*`、`config.sample.json`。
 - 未创建：`read.ps1`、`render.ps1`、`publish.ps1`、`migrate.ps1`；控制台尚未接扫描按钮。
 

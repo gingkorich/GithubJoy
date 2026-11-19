@@ -193,6 +193,17 @@ M2 扫描（2026-11-19，DryRun 通过）：
 
 阈值 v3（2026-11-19）：today >100 / week >2000 / month >5000。实测 totalCount 2 / 5 / 30，去重 37；已 unread 19、已 star 1；剩余 17 全部入选（month 12 + 补齐 5），无 capped；计划 star 17、unread 60→77。
 
+M3b 阅读与总结（2026-11-19）：
+- 新增 `scripts/read.ps1`、`scripts/lib/llm.ps1`、`scripts/prompts/*`（system/user/repair/cliches）、`run-joy.bat`；
+- 流程：选 pending 前 n（或 OnlyId/IdsFile）→ `summarizing` → 抓 repo/README/目录树（deep 另抓 3–5 关键文件）→ LLM → 校验/修复 → 写 `data/summaries/<o>__<r>.json` → 队列 `done`；
+- 试跑开关：`-DryRun`（只选）、`-NoWrite`（抓+调模型不落盘）、`-NoLlm`（只抓材料）、`-Lite`（不读源码）、`-Force`；
+- 实测：chronytop（Lite）materials README 4339 / tree 16；LLM 真实输出 overview 126 字、qa 6 组、warnings 0；summary 6604 字节，queue `done`、state.lastRead 更新；
+- 踩坑与修复：
+  1) `auto` 拒绝 `temperature` → 400；测试与正式调用均改为默认不发送，显式配置才带；
+  2) 推理模型把 max_tokens 用在 reasoning，导致 content 为空/被截断 → 初始 12000，`finish_reason=length` 时自动翻倍（上限 12000）重试；超时调到 240s；
+  3) 模型偶发输出带裸换行/尾逗号的 JSON → 增加修复器（转义字符串内控制字符、去尾逗号），失败时把原始输出写到 `data/last-llm-raw.txt`；
+  4) `.ps1` 混入中文导致 PS 5.1 解析失败 → 中文全部移到 `prompts/*.txt/.tpl`，脚本保持纯 ASCII。
+
 M3a 模型配置（2026-11-19）：
 - 新增 `GET/PUT /api/llm`、`POST /api/llm/test`，页面「模型」区（接口/模型/Key/超时/保存/测试）；
 - 写入 `llm.json` 原子替换，ACL 只授当前用户 `(F)`（实测 `(R,W)` 会因缺少删除权限导致 rename EPERM）；

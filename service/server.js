@@ -146,10 +146,17 @@ function saveLlm(body) {
 
   // Windows: replacing a file requires delete permission, so fix ACL before the atomic rename.
   if (fs.existsSync(LLM_FILE)) applyLlmAcl();
-  writeJson(LLM_FILE, {
+  // temperature is optional: only send it when explicitly configured,
+  // because router models (e.g. "auto") reject it with HTTP 400.
+  const out = {
     base_url: baseUrl, api_key: apiKey, model,
-    timeout_sec: timeoutSec, max_retries: cur.maxRetries || 3, temperature: 0.2,
-  });
+    timeout_sec: timeoutSec, max_retries: cur.maxRetries || 3,
+  };
+  if (body.temperature !== undefined && body.temperature !== null && body.temperature !== '') {
+    const t = Number(body.temperature);
+    if (Number.isFinite(t)) out.temperature = t;
+  }
+  writeJson(LLM_FILE, out);
 
   const warning = applyLlmAcl();
   return { warning };
