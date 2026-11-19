@@ -57,6 +57,14 @@ function Fail-JoyPublish([int]$Code, [string]$Message, [string]$Hint = '') {
   Save-ResultAndExit $Code
 }
 
+function Set-JoyProp($Obj, [string]$Name, $Value) {
+  if ($Obj.PSObject.Properties.Name -contains $Name) {
+    $Obj.$Name = $Value
+  } else {
+    $Obj | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
+  }
+}
+
 function Invoke-Git([string[]]$GitArgs) {
   $prev = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
@@ -208,9 +216,9 @@ if ($script:Result.pushed) {
   foreach ($e in $pending) { $pendingNames[[string]$e.file] = $true }
   foreach ($e in $entries) {
     if ($pendingNames.ContainsKey([string]$e.file)) {
-      $e.published = $true
-      $e.pushedAt = $now
-      if ($baseUrl) { $e.url = $baseUrl + '/' + [string]$e.file }
+      Set-JoyProp $e 'published' $true
+      Set-JoyProp $e 'pushedAt' $now
+      if ($baseUrl) { Set-JoyProp $e 'url' ($baseUrl + '/' + [string]$e.file) }
     }
   }
   Write-JoyJsonFile $idxPath $entries
@@ -224,8 +232,8 @@ if ($script:Result.pushed) {
       foreach ($id in @($e.ids)) {
         $k = ([string]$id).ToLowerInvariant()
         if ($map.ContainsKey($k)) {
-          $map[$k].published = $true
-          $map[$k].publishedUrl = [string]$e.url
+          Set-JoyProp $map[$k] 'published' $true
+          Set-JoyProp $map[$k] 'publishedUrl' ([string]$e.url)
         }
       }
     }

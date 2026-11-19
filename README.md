@@ -4,7 +4,7 @@
 
 ## 状态
 
-**需求 + 设计 + 手册 v1.2；M1–M4a 完成，阅读以 unread List 为准（已生成 5 条 summary），M4b 脚本干跑通过，真实推送待 remote/Pages。** 文档：[`REQUIREMENTS.md`](docs/REQUIREMENTS.md)、[`DESIGN.md`](docs/DESIGN.md)、[`RUNBOOK.md`](docs/RUNBOOK.md)。当前可运行：`joy.bat` 控制台（扫描/阅读/模型配置）、`scan.bat`、`run-joy.bat`、`render.ps1`、`publish.ps1`、`migrate.ps1`。
+**M1–M4b 完成并已上线：<https://gingkorich.github.io/GithubJoy/>。** 文档：[`REQUIREMENTS.md`](docs/REQUIREMENTS.md)、[`DESIGN.md`](docs/DESIGN.md)、[`RUNBOOK.md`](docs/RUNBOOK.md)。当前状态：unread 56 / read 4，队列 23 待读；页面与命令行均可扫描、阅读、渲染、发布、迁移。
 
 ## 讨论结论速览
 

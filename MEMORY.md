@@ -204,17 +204,26 @@ M2 扫描（2026-11-19，DryRun 通过）：
 - 根因：队列条目是 `PSCustomObject`，旧条目没有 `readRunId` 属性，直接赋值会抛异常；异常发生在写 summary 之后，导致 summary 成了孤儿、队列停在 failed。
 - 修复：`New-JoyQueueItem` 创建时直接带 `readRunId`；赋值统一走 `Set-JoyItemReadRun`（属性不存在则 `Add-Member -Force`）；选择阶段发现「summary 已存在」即标记 done 并跳过（自愈，避免重跑烧钱）。
 - 恢复：手工把 3 条（cursor/plugins、getarcaneapp/arcane、NVIDIA/SkillEvaluator）置 done 并写 `readRunId`；`render -N 3` 生成 3 卡片 / 15 组问答的报告（19714 字节）。
+上线与迁移（2026-11-19）：
+- 创建 public 仓库 `gingkorich/GithubJoy`，添加 `origin`，Pages 使用 `master` / `docs`；
+- 首次真实 publish 在「标记 published」时抛 `pushedAt` 属性不存在（推送已完成）；用 `Set-JoyProp` / `Add-Member -Force` 修复后重跑成功，标记 2 份报告、4 条队列 published；
+- 真实 migrate 迁移 4 条（chronytop + n3 三条），unread 60→56、read 0→4，快照 `data/state/lists-migrate-20261119-182132.json`；
+- Pages 已构建：`https://gingkorich.github.io/GithubJoy/` 200，`2026-11-19-n3.html` 15301 字节（含 cursor/plugins 与 overview/Q&A）。
+
+M4b 发布与迁移（2026-11-19）：
 - 新增 `scripts/publish.ps1`：`reports/` → `docs/`（含 `.nojekyll`），`git add` 只列页面文件，`fetch` 检查落后，commit + push；`-DryRun` 只打印，`-NoPush` 本地提交不推送；推送成功后把 `reports-index` 与队列条目标 `published/url`（依赖 render 写入的 `ids`）。
 - 新增 `scripts/migrate.ps1`：只处理 `done + published + inUnread` 的条目，先写 `data/state/lists-<runId>.json` 快照，再 `updateUserListsForItem`（其它 List + read），置 `moved`；支持 `-Rollback <runId>` 与 `-DryRun`。
 - 实测：`publish -DryRun` 列 4 个文件；`publish -NoPush` 提交 `5f8618b`（仅 `docs/.nojekyll`、`docs/2026-11-19-n1.html`、`docs/index.html`、`docs/latest.html`）；`migrate -DryRun` 临时标记发布后选中 1 条，目标 read List。
 - 本地 `gh.json` 补了 `publish {repo: gingkorich/GithubJoy, branch: master, dir: docs, baseUrl: …}`；仓库尚无 `origin`，未真实推送。
 - 踩坑：PowerShell 变量大小写不敏感，脚本内部 `$runId` 覆盖了参数 `$RunId`（render/migrate），导致 `-RunId` 过滤恒为空；内部变量统一改名 `$runTag`。
+
 M4a 渲染（2026-11-19）：
 - 新增 `scripts/render.ps1`、`templates/report.html.tpl`、`templates/index.html.tpl`、`templates/labels.json`（中文文案外置，脚本纯 ASCII）；
 - 产物：`reports/<date>-n<n>.html`、`latest.html`、`index.html`、`data/reports-index.json`（published=false，待 M4b）；
 - 选择：`-N`（最近 done 的 N 条，按 summary 修改时间）、`-OnlyId` / `-IdsFile`、`-RunId`（需 `read.ps1` 写入 `readRunId`）；`-NoIndex` 跳过索引；
 - 实测：chronytop → 报告 7823 字节、1 卡片、6 个 details、无残留占位符；索引 1 条；
 - 安全：XSS 样例（`<script>`、`<img onerror>`、`&`、引号、换行）全部转义，仅放行 `<br>`。
+
 M3d 控制台阅读按钮（2026-11-19）：
 - `POST /api/read`（`{n,lite,noWrite,dryRun}`），页面「阅读」卡：数量 1–20、Lite、不写盘、上次阅读/待读；
 - 与扫描共用单任务槽；进度、日志、结果摘要（成功/失败/跳过/Q&A 总数）复用任务卡；

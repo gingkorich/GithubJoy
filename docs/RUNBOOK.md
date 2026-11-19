@@ -855,4 +855,6 @@ git pull --ff-only
 | `read.ps1 -DryRun`（以 unread List 为准） | ✅ 已回填（2026-11-19）：List 60 项、选中 5 个（cursor/plugins 等）、`created=5`；DryRun 未写队列 |
 | `read.ps1 -N 1 -Lite -NoLlm` | ✅ 已回填（2026-11-19）：镜像 1 条到队列（seq/nodeId/stars 正确），只抓材料不调模型，状态保持 pending |
 | `read.ps1` n=3 deep（故障与修复） | ✅ 已回填（2026-11-19）：3 条 summary 生成成功但队列标记抛 `readRunId` 属性不存在；修复后 3 条恢复 done，`render -N 3` 生成 3 卡片 / 15 问答 |
+| 真实发布（仓库 + Pages） | ✅ 已回填（2026-11-19）：创建 public 仓库、`master` / `docs` Pages；publish 推送后标记 2 份报告 / 4 条 published；`https://gingkorich.github.io/GithubJoy/` 返回 200 |
+| 真实迁移 | ✅ 已回填（2026-11-19）：迁移 4 条（chronytop + n3 三条），unread 60→56、read 0→4，快照 `lists-migrate-20261119-182132.json` |
 | AC-1～AC-14 实测结果 | M2–M5 逐条 |
