@@ -553,8 +553,8 @@ foreach ($n in $toAdd) {
   $newEntries += [pscustomobject]@{ qi = $qi; ids = $n.ids }
 }
 $queue.seq = $seq
-Write-JoyLog "enqueued: $($newEntries.Count) (seq up to $seq)"
-Write-JoyEvent @{ evt = 'progress'; phase = 'queue'; done = 1; total = 1 }
+Write-JoyLog "selected for unread: $($newEntries.Count)"
+Write-JoyEvent @{ evt = 'progress'; phase = 'select'; done = 1; total = 1 }
 
 # ------------------------------------------------- star + lists write
 # GitHub Star Lists only keep starred repositories: star first, then add.
@@ -661,9 +661,9 @@ if ($DryRun) {
   $ensuredOk = $ensuredPlan
 }
 $script:Result.listAddFailed = $addFailed
-$script:Result.queued = $newEntries.Count
+$script:Result.queued = 0
 $script:Result.added = $addedOk
-$script:Result.ensured = $ensuredOk
+$script:Result.ensured = 0
 Write-JoyLog ("star: done={0} planned={1} skipped={2} failed={3}" -f $starCount, $starPlan, $starSkipped, $starFailed)
 Write-JoyLog ("lists write: addedOk={0} failed={1}" -f $addedOk, $addFailed.Count)
 
@@ -677,25 +677,21 @@ $state.lastScan = [pscustomobject][ordered]@{
   durationMs = $elapsed
   scanned = $records.Count
   added = $addedOk
-  queued = $newEntries.Count
-  ensured = $ensuredOk
+  queued = 0
+  ensured = 0
   skipped = $skipped
   totalUnreadAfter = $totalUnreadAfter
 }
 $state.unreadTotal = [pscustomobject][ordered]@{ count = $totalUnreadAfter; refreshedAt = (New-IsoNow) }
 $state.starCounters = [pscustomobject][ordered]@{ day = $today; count = $dayCount }
 
-$queuePath = Get-QueuePath
 $statePath = Get-StatePath
-$queue.updatedAt = (New-IsoNow)
 
 if (-not $DryRun) {
-  Write-JoyJsonFile $queuePath $queue
   Write-JoyJsonFile $statePath $state
-  $script:Result.queueFile = $queuePath
-  Write-JoyLog "queue and state written"
+  Write-JoyLog 'state written (queue untouched)'
 } else {
-  Write-JoyLog 'dryRun: queue/state not written'
+  Write-JoyLog 'dryRun: state not written'
 }
 
 $script:Result.totalUnreadAfter = $totalUnreadAfter
@@ -705,8 +701,8 @@ $script:Result.starFailed = $starFailed
 $script:Result.ok = ($addFailed.Count -eq 0 -and $starFailed -eq 0)
 
 Write-JoyEvent @{ evt = 'progress'; phase = 'done'; done = 5; total = 5 }
-Write-JoyLog ("summary: scanned={0} added={1} ensured={2} queued={3} unread {4}->{5} starred={6} skipped={7} listFailed={8}" -f `
-  $records.Count, $addedOk, $ensuredOk, $newEntries.Count, $unreadCount, $totalUnreadAfter, $script:Result.starred, $starSkipped, $addFailed.Count)
+Write-JoyLog ("summary: scanned={0} added={1} unread {2}->{3} starred={4} skipped={5} listFailed={6}" -f `
+  $records.Count, $addedOk, $unreadCount, $totalUnreadAfter, $script:Result.starred, $starSkipped, $addFailed.Count)
 
 $exitCode = 0
 if (-not $script:Result.ok) { $exitCode = 5 }

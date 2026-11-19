@@ -216,7 +216,12 @@ M4c 控制台产出按钮（2026-11-19）：
 - 任务卡新增三种类型的标签与结果摘要（页面 N 个/Q&A；发布已推送/文件数/提交；迁移成功/失败）；
 - 实测：publish DryRun = nothing to publish；migrate DryRun = nothing to migrate；render 传不存在 id 时正确失败并显示原因。
 
-计数口径修正（2026-11-19）：
+队列改为临时工作集（2026-11-19，用户要求）：
+- 清空原队列（备份 `data/queue.before-clear-*.json`）；
+- `scan.ps1` 不再读写队列：只做 Search → 去重/配额 → star → 加入 unread；结果 `queued=0`，只写 state；
+- `read.ps1` 开始时清空队列，从 unread List 取 n 条写入队列，阅读结束（成功或失败）再次清空；
+- `migrate.ps1` 改为以 `reports-index.json` 的 `published` 条目为来源，与 unread List 求交集，不再依赖队列；迁移前建快照，保留其它 List；
+- 实测：read DryRun 选中 5 个且队列仍为 0；`-N 1 -Lite -NoLlm` 结束后队列 items=0/seq=0；scan DryRun `queued=0` 且队列不变；migrate DryRun 正常返回 0 条。
 - 「队列待读」= 本地 queue 中 status=pending 的条目，仅代表工具经手过、尚未总结的项目；**不等于 unread List 总数**（阅读实际按 unread List 取前 n）。
 - 页面「阅读 → 待读」显示 unread List 总数；扫描卡已不再显示队列。
 - `read.ps1` 每次读取列表后刷新 `state.unreadTotal`；`migrate.ps1` 迁移后按 unread.itemCount − moved 更新；修复了迁移后页面仍显示 60 的问题（实际 56）。

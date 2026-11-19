@@ -76,60 +76,91 @@ if (-not $unread -or -not $read) { Fail-JoyMigrate 2 'unread/read List not found
 $unreadId = [string]$unread.id
 $readId = [string]$read.id
 
-$queue = Read-JoyJsonFile $queuePath
-if (-not $queue -or -not ($queue.PSObject.Properties.Name -contains 'items')) { Fail-JoyMigrate 1 'queue.json missing' 'Run scan/read first' }
-
 # ---------------------------------------------------------------- rollback
 if ($Rollback) {
   $snapPath = Join-Path $stateDir ('lists-' + $Rollback + '.json')
   if (-not (Test-Path -LiteralPath $snapPath)) { Fail-JoyMigrate 2 ('snapshot not found: ' + $snapPath) }
   $snap = Read-JoyJsonFile $snapPath
-  $map = @{}
-  foreach ($q in @($queue.items)) { if ($q.id) { $map[([string]$q.id).ToLowerInvariant()] = $q } }
 
   foreach ($s in @($snap.items)) {
-    $k = ([string]$s.id).ToLowerInvariant()
-    if (-not $map.ContainsKey($k)) { continue }
-    $item = $map[$k]
     $target = @()
     foreach ($id in @($s.otherListIds)) { if ($id) { $target += [string]$id } }
     $target += $unreadId
     if ($DryRun) {
-      Write-JoyLog ("dryRun: would restore {0} to [{1}]" -f $item.fullName, ($target -join ', '))
+      Write-JoyLog ("dryRun: would restore {0} to [{1}]" -f $s.fullName, ($target -join ', '))
       $script:Result.rolledBack++
       continue
     }
-    $nodeId = [string]$item.repo.nodeId
-    if (-not $nodeId) { $nodeId = Get-JoyRepoNodeId -Token $token -FullName ([string]$item.fullName) -Proxy $proxy }
+    $nodeId = [string]$s.nodeId
+    if (-not $nodeId) { $nodeId = Get-JoyRepoNodeId -Token $token -FullName ([string]$s.fullName) -Proxy $proxy }
     if (-not $nodeId) { $script:Result.failed++; continue }
     $r = Set-JoyItemLists -Token $token -NodeId $nodeId -ListIds $target -Proxy $proxy
-    if ($r.ok) {
-      $item.status = 'done'; $item.movedAt = $null
-      if ($item.list) { $item.list.inUnread = $true; $item.list.inRead = $false }
-      $script:Result.rolledBack++
-    } else { $script:Result.failed++ }
+    if ($r.ok) { $script:Result.rolledBack++ } else { $script:Result.failed++ }
     Start-Sleep -Milliseconds 300
-  }
-  if (-not $DryRun) {
-    $queue.updatedAt = (New-IsoNow)
-    Write-JoyJsonFile $queuePath $queue
   }
   $script:Result.ok = ($script:Result.failed -eq 0)
   if (-not $script:Result.ok) { Save-ResultAndExit 5 }
   Save-ResultAndExit 0
 }
 
-# ---------------------------------------------------------------- select
-$todo = @()
-foreach ($x in @($queue.items)) {
-  if ([string]$x.status -ne 'done') { continue }
-  if (-not [bool]$x.published) { continue }
-  if (-not ($x.PSObject.Properties.Name -contains 'list')) { continue }
-  if (-not $x.list) { continue }
-  if (-not [bool]$x.list.inUnread) { continue }
-  $todo += $x
+# ---------------------------------------------------------------- select from published reports
+$idxPath = Join-Path $dataDir 'reports-index.json'
+$idx = Read-JoyJsonFile $idxPath
+if (-not $idx) { Fail-JoyMigrate 1 'reports-index.json missing' 'Run render and publish first' }
+if ($idx -isnot [array]) { $idx = @($idx) }
+
+$publishedIds = @{}
+foreach ($e in $idx) {
+  if (-not [bool]$e.published) { continue }
+  if (-not ($e.PSObject.Properties.Name -contains 'ids')) { continue }
+  foreach ($id in @($e.ids)) {
+    if ($id) { $publishedIds[([string]$id).ToLowerInvariant()] = $true }
+  }
 }
-if ($RunId) { $todo = @($todo | Where-Object { [string]$_.readRunId -eq $RunId }) }
+if ($publishedIds.Count -eq 0) {
+  Write-JoyLog 'nothing to migrate (no published report entries)'
+  $script:Result.ok = $true
+  Save-ResultAndExit 0
+}
+if ($RunId) { Fail-JoyMigrate 2 'RunId filter is no longer supported' 'Use -OnlyId or migrate all published entries' }
+
+$detail = Get-JoyListItemsDetailed -Token $token -ListId $unreadId -Proxy $proxy -Max 300
+if (-not $detail.ok) { Fail-JoyMigrate 2 ('cannot read unread items: ' + [string]$detail.error) }
+$unreadMap = @{}
+foreach ($li in @($detail.items)) { $unreadMap[([string]$li.fullName).ToLowerInvariant()] = $li }
+
+$membership = @{}
+foreach ($l in @($listsRes.lists)) {
+  $items = Get-JoyListItems -Token $token -ListId ([string]$l.id) -Proxy $proxy
+  if (-not $items.ok) { continue }
+  foreach ($nm in @($items.names)) {
+    $k = ([string]$nm).ToLowerInvariant()
+    if (-not $membership.ContainsKey($k)) { $membership[$k] = New-Object System.Collections.Generic.List[string] }
+    if (-not $membership[$k].Contains([string]$l.id)) { $membership[$k].Add([string]$l.id) }
+  }
+}
+
+$todo = @()
+foreach ($k in @($publishedIds.Keys)) {
+  if (-not $unreadMap.ContainsKey($k)) { continue }
+  $li = $unreadMap[$k]
+  $other = @()
+  if ($membership.ContainsKey($k)) {
+    foreach ($id in $membership[$k]) {
+      if ($id -ne $unreadId -and $id -ne $readId) { $other += [string]$id }
+    }
+  }
+  $todo += [pscustomobject]@{
+    id = $k
+    fullName = [string]$li.fullName
+    status = 'done'
+    published = $true
+    movedAt = $null
+    lastError = $null
+    repo = [pscustomobject]@{ nodeId = [string]$li.id }
+    list = [pscustomobject]@{ inUnread = $true; inRead = $false; otherListIds = $other }
+  }
+}
 if ($OnlyId) {
   $todo = @($todo | Where-Object {
       ([string]$_.id).ToLowerInvariant() -eq $OnlyId.ToLowerInvariant() -or
@@ -232,10 +263,6 @@ foreach ($it in $todo) {
 
 $script:Result.items = $itemsOut
 if (-not $DryRun) {
-  $queue.updatedAt = (New-IsoNow)
-  Write-JoyJsonFile $queuePath $queue
-  Write-JoyLog 'queue updated'
-
   $st = Read-JoyJsonFile (Get-StatePath)
   if (-not $st) { $st = [pscustomobject]@{ version = 1 } }
   $base = [int]$unread.itemCount

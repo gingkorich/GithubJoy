@@ -120,6 +120,8 @@ D:\AIproject\GithubJoy\
 
 ### 3.1 `data/queue.json`
 
+> 队列是**本轮阅读的临时工作集**：read 开始时只写入选中的 n 条，结束（成功或失败）后清空；scan 不读写队列。因此 queue 中的条目不等于 unread List 内容。
+
 ```json
 {
   "version": 1,
@@ -275,7 +277,7 @@ D:\AIproject\GithubJoy\
 5. 写 data/trending-<date>.json
 6. 合并去重 → 过滤 → 候选（4.2 / 4.3）
 7. 查询 Lists（unread / read 全量翻页）建立 fullName → listIds 索引
-8. 新条目：star（受 4.4 限制）→ 写 queue(pending) → 加入 unread（替换语义，4.5）
+8. 新条目：star（受 4.4 限制）→ 加入 unread（替换语义，4.5）；**不写本地队列**
 9. 写 state.lastScan 与 jobs/<id>.json，打印统计
 ```
 
@@ -392,7 +394,7 @@ listsCreated / listAddFailed
 ### 5.1 一轮 read 的顺序
 
 ```
-1. 选条目：从 **unread List** 按 List 顺序取前 n（或 -OnlyId / -IdsFile，必须在 List 中）→ 队列缺失则补建镜像 → 置 summarizing
+1. 选条目：从 **unread List** 按 List 顺序取前 n（或 -OnlyId / -IdsFile，必须在 List 中）→ 写入**本轮临时队列**（n 条）→ 置 summarizing；读完清空队列
 2. 逐条：抓材料 → LLM → 校验 → 写 summaries/<id>.json（断点）→ 置 done
    失败：置 failed、记录 lastError，继续下一条
 3. 全部处理完（含失败）→ render.ps1 生成本轮 HTML（含失败项说明）
@@ -458,6 +460,8 @@ deep: 取 top 3–5；lite: 取 0
 - 网络类失败（超时 / 5xx / 429）按 2s / 4s / 8s 退避，最多 3 次。
 
 ### 5.4 迁移（FR-7，依赖 4.5 的替换语义）
+
+- 选条目来源：`data/reports-index.json` 中 `published=true` 的 `ids` 与当前 `unread` List 求交集（队列在阅读后已清空，不再作为迁移依据）；
 
 ```graphql
 mutation MoveToList($itemId: ID!, $target: [ID!]!) {

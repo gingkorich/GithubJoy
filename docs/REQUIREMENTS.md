@@ -30,7 +30,7 @@ GitHub Joy 把这件事做成一条流水线：
 **核心目标**
 
 1. **不漏**：三个周期榜的并集在每次扫描中都被覆盖，条目可追溯来源与名次；
-2. **不重**：同一项目跨榜单、跨天只入队一次，读过的永不再读；
+2. **不重**：同一项目跨榜单、跨天只加入 `unread` 一次，读过的永不再读；
 3. **可控**：读多少由 `n` 决定，成本随时可预算，可断点续跑；
 4. **可读**：产出一页 HTML，讲清「这项目干什么、怎么实现的」，而不是复述 README 摘要；
 5. **闭环**：收藏夹状态自动迁移（unread → read），失败可回滚；
@@ -39,7 +39,7 @@ GitHub Joy 把这件事做成一条流水线：
 **非目标**
 
 - 不做 Web 服务、不做账号体系：单人、本机 + 个人 GitHub 账号；
-- 不做推荐算法：顺序只由「入队时间 / 榜单周期 / 榜单名次」决定，不做兴趣打分；
+- 不做推荐算法：顺序由 `unread` List 顺序决定（扫描时只记录周期与名次），不做兴趣打分；
 - 不抓私有仓库、不绕过登录、不处理 2FA/验证码；
 - 不做全文翻译，不做视频/播客转写；
 - 不做刷 star、刷 trending 等操纵榜单的行为；star 只是收藏动作（默认随 unread 一起 star，见 Q2），不存在批量刷 star 逻辑；
@@ -49,7 +49,7 @@ GitHub Joy 把这件事做成一条流水线：
 
 **成功判据**
 
-- 连续 7 天手动运行的扫描均不出现「漏抓/重复入队」；
+- 连续 7 天手动运行的扫描均不出现「漏抓/重复加入」；
 - 一次 `n=10` 的运行在 25 分钟内产出可打开的页面（模型正常时）；
 - 任意一次运行中断后，重跑不重复计费、不产生半成品页面；
 - `unread` / `read` 两个收藏夹的内容与本地状态始终一致，偏差可一键修复。
@@ -63,10 +63,10 @@ GitHub Joy 把这件事做成一条流水线：
 | 榜单 / 周期 | 由 Search API 取出的 today / week / month 三个周期榜（`created:>=` 时间窗 + `sort=stars`），**不是** GitHub Trending 页面上的实时榜 |
 | 条目（item） | 榜单上的一个仓库，唯一键为 `owner/name`（比较时忽略大小写） |
 | 排名 | 条目在某周期榜搜索结果中的顺序（按总 star 降序），从 1 开始 |
-| 队列 | 本地 `data/queue.json`，保存待读顺序与每个条目的状态；是「当前顺序」的唯一权威来源 |
+| 队列 | 本地 `data/queue.json`，**本轮阅读的临时工作集**：阅读开始时写入选中的 n 条，阅读结束清空；扫描不写队列 |
 | unread / read | 用户 GitHub 账号下的两个 Star List（GraphQL `UserList`） |
-| 扫描（scan） | 抓榜单 → 去重排序 → 入队 → 同步到 unread 的一整轮动作 |
-| 阅读（read） | 取前 n 条 → 抓 README/目录树/关键文件 → LLM 总结 → 生成 HTML 的一整轮动作 |
+| 扫描（scan） | 抓榜单 → 去重排序 → 按配额选择 → star + 加入 `unread` 的一整轮动作（不写本地队列） |
+| 阅读（read） | 从 `unread` 取前 n 条写入临时队列 → 抓 README/目录树/关键文件 → LLM 总结 → 生成 HTML → 清空队列 |
 | 迁移（move） | 把条目从 unread 移除并加入 read |
 | 轮次（RunId） | 每次 scan / read 的唯一标识，默认 `yyyyMMdd-HHmmss-<kind>` |
 | lite / deep | 阅读深度：lite = README + 目录树；deep = 额外读 3–5 个关键源码文件 |
@@ -99,7 +99,7 @@ GitHub Joy 把这件事做成一条流水线：
 **范围内**
 
 - 三个周期榜（today / week / month）的 Search API 查询；
-- 跨榜单/跨天去重、排序、入队；
+- 跨榜单/跨天去重、排序、加入 `unread`；
 - 通过 GraphQL 管理 `unread` / `read` 两个 List（创建、添加、移除），可选 star；
 - README / 目录树 / 关键文件的抓取与截断策略；
 - LLM 总结（主要功能、实现逻辑、技术栈、适用场景、亮点与风险）；
@@ -147,31 +147,30 @@ GitHub Joy 把这件事做成一条流水线：
 - **结果必须可验证**：任一周期返回 0 条或 `total_count=0`，视为该周期为空（警告并继续）；**三个周期全为空**才判定失败——退出码非 0、写错误日志，**不写空结果、不覆盖上一次文件**；
 - 请求失败（网络/5xx/超时）重试 3 次（1s/2s/4s）；403/429 读 `Retry-After` 退避；Search 限额较低（认证后 30 次/分钟），三周期 + 少量分页须控制在限额内，超限即中止本轮，**不降级为「少抓几个周期」**；
 - Search 单查询最多返回 1000 条，本项目只取前 25 条，不受上限影响；
-- 扫描幂等：同一天重复运行只更新快照与队列，不重复入队。
+- 扫描幂等：同一天重复运行只更新榜单快照，不重复加入 `unread`。
 
 **验收**：同一日期连续运行两次，`queue.json` 条目数不变；把 `minStars` 全调成 999999 制造全空结果，运行退出码非 0 且上一次 `trending-*.json` 未被覆盖；单周期为空只告警；日志中三周期 query、`total_count`、`selectionUsed` 均可见。
 
-### FR-2 去重、排序与入队
+### FR-2 去重、排序与加入 unread
 
 - 跨榜单去重键为 `owner/name`（不区分大小写）；
-- 候选集的**周期优先级**：today > week > month；同周期按榜单名次升序；
+- 候选集的**周期优先级**：today > week > month；同周期按 star 降序；
 - 过滤规则（每条都要有可统计的跳过原因）：
   - 已在 `unread` → `already_unread`；
   - 已在 `read` → `already_read`；
   - 已 star（`viewerHasStarred`）→ `starred`；
-  - 本地队列中已存在且状态为 `done` → `already_done`；
   - 命中断链名单（`config.denylist`：组织名、仓库名、语言、关键词）→ `denied`；
-- 新条目**追加到队列尾部**（FIFO：先上榜先读，已确认 2026-11-19），不因今天是 today 第 1 名就插到昨天未读之前；
-- 队列条目字段：`id`、`full_name`、`status`（`pending` / `summarizing` / `done` / `failed` / `moved` / `gone`）、`added_at`、`scanned_from`（周期+名次列表）、`attempts`、`last_error`、`summary_path`；
-- 队列顺序一旦确定，除非用户显式 `-Reorder` 或命中插队规则，否则不再变化（保证「前 n 个」可预期）。
+- 选中条目执行「**先 star → 再加入 unread**」；**扫描不写本地队列**，队列只在阅读时作为本轮工作集；
+- 队列条目字段（阅读阶段创建）：`id`、`full_name`、`status`（`pending` / `summarizing` / `done` / `failed` / `moved` / `gone`）、`added_at`、`scanned_from`、`attempts`、`last_error`、`summary_path`、`read_run_id`；
+- 扫描不改变已有顺序；阅读顺序由 `unread` List 决定。
 
-**验收**：同一仓库同时出现在 today#3 与 week#40，只入队一次且记录两个名次；日志中 `scanned = added + already_unread + already_read + already_done + denied`。
+**验收**：同一仓库同时出现在 today#3 与 week#40，只加入 unread 一次且记录两个名次；日志中 `scanned = added + already_unread + already_read + starred + denied + capped`。
 
 ### FR-3 收藏夹同步（GraphQL Lists）
 
 - 启动时查询用户的 Lists，按配置名（默认 `unread` / `read`）匹配；不存在则 `createUserList` 创建；
 - 新条目通过 `updateUserListsForItem` 加入 `unread`；
-- **幂等**：入队前以 API 查询结果为准确认是否已在目标 List，不依赖本地状态猜测；
+- **幂等**：写入前以 API 查询结果为准确认是否已在目标 List，不依赖本地状态猜测；
 - 单条失败不中断整轮：记录失败清单，最后汇总，支持 `-OnlyId` / `-IdsFile` 重试；
 - 默认 **star**（已确认 2026-11-19）：加入 `unread` 时对条目执行 star；`-NoStar` 或 `config.star_on_add=false` 可关闭；star 已存在时不重复调用；
 - **Star List 只保留已 star 的仓库**（2026-11-19 实测）：未 star 就写 List，条目会在之后被 GitHub 清除。因此顺序必须是「**先 star，再写 List**」；`-NoStar` 时跳过 List 写入并告警，不做「加进去但没 star」的假成功；
@@ -186,7 +185,7 @@ GitHub Joy 把这件事做成一条流水线：
   - 双击运行 → 提示 `How many projects to read today? (1-20, default 5)`；
   - `run-joy.bat 5` → 直接使用参数；
   - 非法输入（非整数 / ≤0 / 超过上限）→ 提示后退出，不产生任何远端写入；
-- 取 **`unread` List 中按 List 顺序的前 `n` 条**（队列只作状态镜像；`-OnlyId` 的条目必须存在于 unread List）；
+- 取 **`unread` List 中按 List 顺序的前 `n` 条**（选中后写入本地临时队列作为本轮工作集，阅读结束清空；`-OnlyId` 的条目必须存在于 unread List）；
 - 支持 `-OnlyId <owner/name>`、`-IdsFile <path>` 定向阅读、`-Force` 重读已完成项、`-DryRun` 只打印将要读的清单；
 - 每条抓取的材料：
   - 仓库元数据（描述、语言、star、license、最后提交时间、topics）；
@@ -387,7 +386,7 @@ GitHub Joy 把这件事做成一条流水线：
 | 页面刷新 | 1 秒 | 轮询 `status` 与 `jobs/<id>` |
 | 周期优先级 | today > week > month | 用于配额归属；同周期按 star 降序 |
 | 入选规则 | 排除已 star → 配额 5/8/12 → 不足补齐 | 总数 ≤25 时全取；每轮 ≤25 |
-| 每日 star 额度 | 100 | 入队数不超过剩余额度 |
+| 每日 star 额度 | 100 | 每轮新增数不超过剩余额度 |
 | 队列策略 | FIFO 追加（已确认） | 先上榜先读，扫描不改动已有顺序 |
 | 每次阅读数 n | 交互输入，默认 5，上限 20 | 超限需显式确认 |
 | README 上限 | 20,000 字符 | 截断必须注明 |

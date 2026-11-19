@@ -172,8 +172,8 @@ scanned = added + already_unread + already_read + already_done + denied
 
 在页面输入 `5` → **阅读 5 个**（与 `run-joy.bat 5` 等价）。
 
-- 阅读源是 **GitHub `unread` List**（按 List 顺序），不是本地队列；队列只是状态镜像，遇到 List 里有、队列里没有的项目会自动补建；
-- 页面「待读」显示 unread List 总数；「队列」显示本地镜像状态；
+- 阅读源是 **GitHub `unread` List**（按 List 顺序），选中后写入本地临时队列；**阅读结束（成功或失败）队列清空**；
+- 扫描不写本地队列；页面「待读」显示 unread List 总数；
 - 已有 summary 的条目会自动跳过（`-Force` 重做）。
 
 进度会显示：阶段 → 已处理条数 → 日志尾部。中途可关闭页面（服务仍在跑）；重开页面会自动接上进度。

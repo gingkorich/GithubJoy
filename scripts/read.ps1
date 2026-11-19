@@ -154,6 +154,14 @@ if (-not $queue -or -not ($queue.PSObject.Properties.Name -contains 'items')) {
 }
 $queue.items = @($queue.items)
 
+if (-not $NoWrite -and -not $DryRun) {
+  # queue is a per-run working set: start empty
+  $queue.items = @()
+  $queue.seq = 0
+  Save-Queue $queue
+  Write-JoyLog 'queue reset for this read batch'
+}
+
 # reset items left in summarizing by a cancelled/interrupted run
 $stale = @($queue.items | Where-Object { [string]$_.status -eq 'summarizing' })
 if ($stale.Count -gt 0) {
@@ -215,17 +223,11 @@ foreach ($li in $listItems) {
 
   $sp = Get-JoySummaryPath ([string]$li.fullName)
   if (-not $Force -and (Test-Path -LiteralPath $sp)) {
-    if (-not $existing) {
-      $seq++
-      $existing = New-JoyQueueItem -Li $li -Seq $seq -Status 'done' -SummaryPath $sp
-      $queue.items = @($queue.items) + $existing
-      $queueIndex[$key] = $existing
-      $created++
-    } else {
+    if ($existing) {
       $existing.status = 'done'
       $existing.summaryPath = $sp
+      Save-Queue $queue
     }
-    Save-Queue $queue
     $script:Result.skipped++
     Write-JoyLog ("reuse existing summary: {0}" -f $li.fullName)
     continue
@@ -671,6 +673,14 @@ if (-not $NoWrite) {
   }
   $stateObj | Add-Member -NotePropertyName lastRead -NotePropertyValue $lastRead -Force
   Write-JoyJsonFile (Get-StatePath) $stateObj
+
+  if (-not $DryRun) {
+    $queue.items = @()
+    $queue.seq = 0
+    $queue.updatedAt = (New-IsoNow)
+    Write-JoyJsonFile (Get-QueuePath) $queue
+    Write-JoyLog 'queue cleared after read'
+  }
 }
 
 $script:Result.ok = ($script:Result.failed -eq 0)
