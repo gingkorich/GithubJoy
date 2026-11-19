@@ -215,6 +215,12 @@ M4c 控制台产出按钮（2026-11-19）：
 - 页面新增「产出」卡：最近 N 条 + 生成页面、发布到 Pages、迁移到 read；发布/迁移前二次确认；
 - 任务卡新增三种类型的标签与结果摘要（页面 N 个/Q&A；发布已推送/文件数/提交；迁移成功/失败）；
 - 实测：publish DryRun = nothing to publish；migrate DryRun = nothing to migrate；render 传不存在 id 时正确失败并显示原因。
+
+计数口径修正（2026-11-19）：
+- 「队列待读」= 本地 queue 中 status=pending 的条目，仅代表工具经手过、尚未总结的项目；**不等于 unread List 总数**（阅读实际按 unread List 取前 n）。
+- 页面「阅读 → 待读」显示 unread List 总数；扫描卡已不再显示队列。
+- `read.ps1` 每次读取列表后刷新 `state.unreadTotal`；`migrate.ps1` 迁移后按 unread.itemCount − moved 更新；修复了迁移后页面仍显示 60 的问题（实际 56）。
+- 另发现一次手动阅读中断留下 1 条 `summarizing`，已重置为 pending。
 M4b 发布与迁移（2026-11-19）：
 - 新增 `scripts/publish.ps1`：`reports/` → `docs/`（含 `.nojekyll`），`git add` 只列页面文件，`fetch` 检查落后，commit + push；`-DryRun` 只打印，`-NoPush` 本地提交不推送；推送成功后把 `reports-index` 与队列条目标 `published/url`（依赖 render 写入的 `ids`）。
 - 新增 `scripts/migrate.ps1`：只处理 `done + published + inUnread` 的条目，先写 `data/state/lists-<runId>.json` 快照，再 `updateUserListsForItem`（其它 List + read），置 `moved`；支持 `-Rollback <runId>` 与 `-DryRun`。
