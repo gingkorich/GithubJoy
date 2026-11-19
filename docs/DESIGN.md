@@ -947,6 +947,7 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 | D10 | M1 阶段的 gh 状态由 Node 直接调用 `gh auth status --json` 提供；`status.ps1` 顺延到 M2（需要 unread 总数时） | DESIGN 2 目录树 | 少一层进程转发；GitHub API 仍未进入 Node，认证逻辑依旧只在 gh / PowerShell 侧 |
 | D11 | `read.ps1` 增加 `-NoWrite`（抓材料 + 调模型但不落盘）与 `-NoLlm`（只抓材料）两个试跑开关；`-NoPublish` 在 M3b 阶段暂不生效 | DESIGN 5.1（渲染/发布属 M4） | 先验证材料与 JSON 质量，避免把半成品写入队列 |
 | D12 | `publish.ps1` 增加 `-DryRun`（只打印计划）与 `-NoPush`（复制并本地提交、不推送）；内部 runId 变量统一命名为 `$runTag` | DESIGN 5.5 | 规避 PowerShell 变量大小写不敏感导致 `$runId` 覆盖参数 `$RunId`（render/migrate 已踩） |
+| D13 | `readRunId` 统一用 `Add-Member -Force` 写入（旧队列条目可能没有该属性），创建条目时直接带上该字段 | DESIGN 3.1 | `PSCustomObject` 不存在属性时直接赋值会抛异常（实测导致 n=3 全部失败） |
 
 ---
 

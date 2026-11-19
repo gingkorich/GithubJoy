@@ -54,6 +54,45 @@ function New-IsoNow { return (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTH
 function Get-QueuePath { Join-Path $dataDir 'queue.json' }
 function Get-StatePath { Join-Path $dataDir 'state.json' }
 
+function Get-JoySummaryPath([string]$FullName) {
+  $p = $FullName -split '/', 2
+  return (Join-Path $sumDir (($p[0] + '__' + $p[1]).ToLowerInvariant() + '.json'))
+}
+
+function New-JoyQueueItem($Li, [int]$Seq, [string]$Status, [string]$SummaryPath) {
+  return [pscustomobject][ordered]@{
+    id = ([string]$Li.fullName).ToLowerInvariant()
+    fullName = [string]$Li.fullName
+    seq = $Seq
+    status = $Status
+    addedAt = (New-IsoNow)
+    scannedFrom = @()
+    repo = [pscustomobject]@{
+      nodeId = [string]$Li.id; description = [string]$Li.description
+      language = [string]$Li.language; stars = [int]$Li.stars; forks = 0
+      topics = @(); archived = [bool]$Li.archived; pushedAt = [string]$Li.pushedAt
+    }
+    list = [pscustomobject]@{ inUnread = $true; inRead = $false; otherListIds = @() }
+    starred = $true
+    starSkipped = $null
+    attempts = 0
+    lastError = $null
+    summaryPath = $SummaryPath
+    readRunId = $null
+    published = $false
+    publishedUrl = $null
+    movedAt = $null
+  }
+}
+
+function Set-JoyItemReadRun($Item, [string]$Value) {
+  if ($Item.PSObject.Properties.Name -contains 'readRunId') {
+    $Item.readRunId = $Value
+  } else {
+    $Item | Add-Member -NotePropertyName readRunId -NotePropertyValue $Value -Force
+  }
+}
+
 function Save-ResultAndExit([int]$Code) {
   $script:Result.durationMs = [int]((Get-Date) - $started).TotalMilliseconds
   if ($JsonOut) { Write-JoyJsonFile $JsonOut $script:Result }
@@ -166,6 +205,24 @@ foreach ($li in $listItems) {
   $existing = $null
   if ($queueIndex.ContainsKey($key)) { $existing = $queueIndex[$key] }
 
+  $sp = Get-JoySummaryPath ([string]$li.fullName)
+  if (-not $Force -and (Test-Path -LiteralPath $sp)) {
+    if (-not $existing) {
+      $seq++
+      $existing = New-JoyQueueItem -Li $li -Seq $seq -Status 'done' -SummaryPath $sp
+      $queue.items = @($queue.items) + $existing
+      $queueIndex[$key] = $existing
+      $created++
+    } else {
+      $existing.status = 'done'
+      $existing.summaryPath = $sp
+    }
+    Save-Queue $queue
+    $script:Result.skipped++
+    Write-JoyLog ("reuse existing summary: {0}" -f $li.fullName)
+    continue
+  }
+
   if ($existing) {
     if ([string]$existing.status -in @('moved', 'gone')) { continue }
     if (-not $Force -and [string]$existing.status -eq 'done' -and $existing.summaryPath -and (Test-Path -LiteralPath ([string]$existing.summaryPath))) {
@@ -177,28 +234,7 @@ foreach ($li in $listItems) {
 
   if (-not $existing) {
     $seq++
-    $existing = [pscustomobject][ordered]@{
-      id = $key
-      fullName = [string]$li.fullName
-      seq = $seq
-      status = 'pending'
-      addedAt = (New-IsoNow)
-      scannedFrom = @()
-      repo = [pscustomobject]@{
-        nodeId = [string]$li.id; description = [string]$li.description
-        language = [string]$li.language; stars = [int]$li.stars; forks = 0
-        topics = @(); archived = [bool]$li.archived; pushedAt = [string]$li.pushedAt
-      }
-      list = [pscustomobject]@{ inUnread = $true; inRead = $false; otherListIds = @() }
-      starred = $true
-      starSkipped = $null
-      attempts = 0
-      lastError = $null
-      summaryPath = $null
-      published = $false
-      publishedUrl = $null
-      movedAt = $null
-    }
+    $existing = New-JoyQueueItem -Li $li -Seq $seq -Status 'pending' -SummaryPath $null
     $queue.items = @($queue.items) + $existing
     $queueIndex[$key] = $existing
     $created++
@@ -586,7 +622,7 @@ foreach ($item in $wanted) {
       Write-JoyJsonFile $summaryPath $summary
       $item.status = 'done'
       $item.summaryPath = $summaryPath
-      $item.readRunId = $runId
+      Set-JoyItemReadRun $item $runId
       $item.lastError = $null
       Save-Queue $queue
     }

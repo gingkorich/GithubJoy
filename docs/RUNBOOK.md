@@ -854,4 +854,5 @@ git pull --ff-only
 | `migrate.ps1 -DryRun` | ✅ 已回填（2026-11-19）：临时标记 published 后选中 1 条，目标为 read List；未真实迁移（等待真实发布） |
 | `read.ps1 -DryRun`（以 unread List 为准） | ✅ 已回填（2026-11-19）：List 60 项、选中 5 个（cursor/plugins 等）、`created=5`；DryRun 未写队列 |
 | `read.ps1 -N 1 -Lite -NoLlm` | ✅ 已回填（2026-11-19）：镜像 1 条到队列（seq/nodeId/stars 正确），只抓材料不调模型，状态保持 pending |
+| `read.ps1` n=3 deep（故障与修复） | ✅ 已回填（2026-11-19）：3 条 summary 生成成功但队列标记抛 `readRunId` 属性不存在；修复后 3 条恢复 done，`render -N 3` 生成 3 卡片 / 15 问答 |
 | AC-1～AC-14 实测结果 | M2–M5 逐条 |

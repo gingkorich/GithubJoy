@@ -199,7 +199,11 @@ M2 扫描（2026-11-19，DryRun 通过）：
 - 页面「待读」改为显示 unread List 总数；「队列」仍显示本地镜像状态。
 - 实测：unread List 60 项，DryRun 选中 5（cursor/plugins 等）且 `created=5`；`-N 1 -Lite -NoLlm` 镜像 cursor/plugins 到队列（seq=26，stars=17385），状态保持 pending。
 
-M4b 发布与迁移（2026-11-19）：
+阅读失败修复（2026-11-19）：
+- 现象：页面 `n=3`、deep 运行失败，日志 `failed ...: 设置“readRunId”时发生异常`；3 次 LLM 调用均成功，summary 已写盘。
+- 根因：队列条目是 `PSCustomObject`，旧条目没有 `readRunId` 属性，直接赋值会抛异常；异常发生在写 summary 之后，导致 summary 成了孤儿、队列停在 failed。
+- 修复：`New-JoyQueueItem` 创建时直接带 `readRunId`；赋值统一走 `Set-JoyItemReadRun`（属性不存在则 `Add-Member -Force`）；选择阶段发现「summary 已存在」即标记 done 并跳过（自愈，避免重跑烧钱）。
+- 恢复：手工把 3 条（cursor/plugins、getarcaneapp/arcane、NVIDIA/SkillEvaluator）置 done 并写 `readRunId`；`render -N 3` 生成 3 卡片 / 15 组问答的报告（19714 字节）。
 - 新增 `scripts/publish.ps1`：`reports/` → `docs/`（含 `.nojekyll`），`git add` 只列页面文件，`fetch` 检查落后，commit + push；`-DryRun` 只打印，`-NoPush` 本地提交不推送；推送成功后把 `reports-index` 与队列条目标 `published/url`（依赖 render 写入的 `ids`）。
 - 新增 `scripts/migrate.ps1`：只处理 `done + published + inUnread` 的条目，先写 `data/state/lists-<runId>.json` 快照，再 `updateUserListsForItem`（其它 List + read），置 `moved`；支持 `-Rollback <runId>` 与 `-DryRun`。
 - 实测：`publish -DryRun` 列 4 个文件；`publish -NoPush` 提交 `5f8618b`（仅 `docs/.nojekyll`、`docs/2026-11-19-n1.html`、`docs/index.html`、`docs/latest.html`）；`migrate -DryRun` 临时标记发布后选中 1 条，目标 read List。
