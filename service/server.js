@@ -168,7 +168,7 @@ async function testLlm() {
         model: c.model,
         messages: [{ role: 'user', content: 'ping' }],
         max_tokens: 1,
-        temperature: 0,
+        // temperature intentionally omitted: some models (e.g. router models) reject it
       }),
       signal: AbortSignal.timeout(Math.min(c.timeoutSec, 30) * 1000),
     });

@@ -416,7 +416,8 @@ gh api -X PUT /user/starred/<owner>/<repo>
 |---|---|---|
 | `401` / `invalid_api_key` | Key 错/过期 | 页面重填 Key → 测试连接 |
 | `404` / `model not found` | `model` 名不对 | 对照服务商文档改 `model` |
-| `400` 提示不支持 `temperature` | 部分模型不接受该参数 | 设计会自动去掉重试；仍失败则删掉 `llm.json.temperature` |
+| `400` 提示不支持 `temperature` | 部分模型（如路由模型 `auto`）不接受该参数 | 测试连接已不带该参数；`read.ps1` 会去掉后重试一次 |
+| 400 `invalid_parameter_error`（其他） | 模型不支持某参数 | 看响应里的 `param`/`message`，按提示删对应字段 |
 | 超时 | 输入过长 / 网络 | `-Lite` 降级重试该条；或调大 `timeout_sec` |
 | `429` | 模型限流 | 等 1–2 分钟；用 `-OnlyId` 单条补 |
 | `data_inspection_failed` | 内容审核 | 设计会缩短输入重试；仍失败则该条失败，换模型或跳过 |

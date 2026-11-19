@@ -540,7 +540,7 @@ server.listen(port, '127.0.0.1', () => {
 | PUT | `/api/llm` | `{baseUrl,model,apiKey?,timeoutSec?}` | `200 {ok,keyMask}`；校验失败 `400` |
 | POST | `/api/llm/test` | — | `{ok,latencyMs,status,error?}` |
 
-> 模型配置的读写由 Node 完成：`PUT` 校验后原子写入 `llm.json`，并用 `icacls` 只授当前用户 `(F)`（Windows 下替换文件需要删除权限，只给 `(R,W)` 会导致 rename 报 EPERM）；`/api/llm/test` 由 Node 直接 `fetch` 模型的 `/chat/completions`（不走 GitHub API），只返回状态与截断后的错误，不落盘。
+> 模型配置的读写由 Node 完成：`PUT` 校验后原子写入 `llm.json`，并用 `icacls` 只授当前用户 `(F)`（Windows 下替换文件需要删除权限，只给 `(R,W)` 会导致 rename 报 EPERM）；`/api/llm/test` 由 Node 直接 `fetch` 模型的 `/chat/completions`（不走 GitHub API），**不发送 `temperature`**（部分路由模型如 `auto` 会直接 400 拒绝该参数），只返回状态与截断后的错误，不落盘。
 
 `GET /api/status` 示例：
 
