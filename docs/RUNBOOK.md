@@ -8,7 +8,7 @@
 | 读者 | 使用者本人、维护者、接手的 AI 代理 |
 
 > 本手册只讲「怎么做、怎么查、怎么退」。设计原因看 `DESIGN.md`，需求边界看 `REQUIREMENTS.md`。
-> 三件事先记住：**只绑 127.0.0.1**、**发布只提交 `docs/` 下生成的页面**、**任何 token 都不进仓库**。
+> 三件事先记住：**只绑 127.0.0.1**、**发布只提交 `reports/` 下生成的页面（根 `.nojekyll`）**、**任何 token 都不进仓库**。
 
 ---
 
@@ -41,7 +41,7 @@
 
 - 项目放在**本地磁盘**，不要放 OneDrive / 坚果云等同步目录（同步会锁文件、改时间戳，`git` 与文件锁都会出错）；
 - 路径避免中文与空格（本机 `D:\AIproject\GithubJoy` 符合）；
-- 目录需要当前用户可读写（发布要写 `docs/`、`git` 要写 `.git/`）。
+- 目录需要当前用户可读写（发布要写 `reports/` 与根 `.nojekyll`、`git` 要写 `.git/`）。
 
 ### 1.3 一次性检查
 
@@ -62,9 +62,9 @@ Test-Path .\docs             # 发布目录是否存在
 ### 2.1 仓库与 Pages
 
 1. 仓库必须 **public**（免费账号的 Pages 前提）；私有仓库需付费方案。
-2. Settings → Pages → Source 选 **Deploy from a branch** → Branch **main** / Folder **/docs** → Save。
-3. 确认仓库根有 `docs/`；首次发布时脚本会创建 `docs/.nojekyll`（没有它 Jekyll 会处理 HTML，可能改写内容）。
-4. 记下 Pages 地址：`https://<你的登录名>.github.io/GithubJoy/`，填进 `gh.json.publish.baseUrl`。
+2. Settings → Pages → Source 选 **Deploy from a branch** → Branch 选你的分支（本项目为 **master**）/ Folder **/(root)** → Save。
+3. 确认仓库根有 `reports/` 与根 `.nojekyll`（首次发布时脚本会创建）；`docs/` 只放 `.md`，不放 HTML。
+4. 记下 Pages 地址：`https://<你的登录名>.github.io/GithubJoy/`，填进 `gh.json.publish.baseUrl`；具体报告地址是 `.../reports/<文件>.html`。
 
 > 仓库公开 = `MEMORY.md`、`AGENTS.md`、`docs/*.md` 与历史提交全部公开。发布前确认没有个人信息与密钥（见第 11 节清单）。
 
@@ -210,7 +210,7 @@ scanned = added + already_unread + already_read + already_done + denied
 | 累计 unread | 与 github.com 上 unread 列表数量一致 | 7.3 |
 | star 数 | 本轮新增 ≤25，日志有 `starSkipped` 记录 | 6.6 |
 | 报告卡片 | 第一段一段话 + 3–6 组问答 | 6.7 |
-| 发布 | 页面显示「已推送」，`git show --stat` 只有 `docs/*.html` 与 `.nojekyll` | 6.8 |
+| 发布 | 页面显示「已推送」，`git show --stat` 只有 `reports/*.html` 与根 `.nojekyll` | 6.8 |
 | 迁移 | unread 减少数 = read 增加数 = 本次成功数 | 6.5 / 7.4 |
 
 ---
@@ -374,7 +374,7 @@ gh auth login --hostname github.com --git-protocol https --web --scopes "user"
 
 ```powershell
 git log --oneline -3          # 有没有 joy: 提交
-git status --short            # docs/ 下是否有未提交页面
+git status --short            # reports/ 下是否有未提交页面
 ```
 
 发布正常但仍无变化，再查：
@@ -453,20 +453,20 @@ git log --oneline main..origin/main     # 远端领先（需要先 pull）
 **只提交页面文件的正确姿势**（脚本内部就是这样做的）：
 
 ```powershell
-git add -- docs/2026-11-19-n5.html docs/latest.html docs/index.html docs/.nojekyll
-git status --short          # 确认只有 docs/ 下这些文件
+git add -- reports/2026-11-19-n5.html reports/latest.html reports/index.html .nojekyll
+git status --short          # 确认只有 reports/ 下这些文件与根 .nojekyll
 git commit -m "joy: 2026-11-19 n=5"
 git push origin main
 ```
 
 ### 6.9 Pages 打开 404 / 还是旧内容
 
-1. Settings → Pages 确认 Source = `main` / `/docs`，且显示「Your site is live at …」；
+1. Settings → Pages 确认 Source = `master` / `/(root)`，且显示「Your site is live at …」；
 2. 确认仓库是 public；
-3. 确认 `docs/.nojekyll` 已提交：
+3. 确认根 `.nojekyll` 已提交：
 
 ```powershell
-git ls-files docs/.nojekyll
+git ls-files .nojekyll
 ```
 
 4. 构建有延迟（常见 10–60 秒），刷新时加 `?v=时间戳` 绕过缓存；
@@ -549,7 +549,7 @@ reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v 
 | `gh.json` / `llm.json` | 凭据与发布配置 | **是** |
 | `data\` | 队列、状态、summary、job、List 快照 | 否 |
 | `reports\` | 历史页面 | 否 |
-| 仓库本身 | 代码与 `docs/*.html` | 否 |
+| 仓库本身 | 代码与 `reports/*.html` | 否 |
 
 ```powershell
 $stamp = Get-Date -Format 'yyyyMMdd-HHmm'
@@ -655,7 +655,7 @@ git push origin main
 ```
 
 - 不要用 `git reset --hard` + force push（会改写公共历史）；
-- 只回退某个页面：`git checkout <上一个提交> -- docs/2026-11-19-n5.html`，再单独提交。
+- 只回退某个页面：`git checkout <上一个提交> -- reports/2026-11-19-n5.html`，再单独提交。
 
 ### 8.2 撤销迁移
 
@@ -717,7 +717,7 @@ gh auth status --hostname github.com     # 新机器通常需要重新登录
 
 1. 改 `gh.json.publish`（repo / branch / dir / baseUrl）；
 2. 新仓库设 public，Pages 指向同分支与 `/docs`；
-3. 跑一次发布，确认 `docs/.nojekyll` 与页面都在；
+3. 跑一次发布，确认根 `.nojekyll` 与 `reports/` 页面都在；
 4. `data/reports-index.json` 里旧 `url` 会指向旧域名：可手工批量替换，或忽略（只影响索引页的历史链接）。
 
 ### 10.3 升级本项目代码
@@ -760,7 +760,7 @@ git pull --ff-only
 
 - [ ] Pages 地址能打开最新页面
 - [ ] `logs\` 无持续 401/403/429
-- [ ] `git log --oneline -10` 里没有意外的非 `docs/` 提交
+- [ ] `git log --oneline -10` 里没有意外的非 `reports/` 页面提交
 
 ### 每月
 
@@ -817,7 +817,7 @@ git pull --ff-only
 | `service/` / `scripts/` / `templates/` | 代码 | 是 |
 | `data/` | 队列与状态 | 否 |
 | `reports/` | 本地历史页面 | 否 |
-| `docs/*.html` | 已发布页面 | 是 |
+| `reports/*.html` | 已发布页面 | 是 |
 | `docs/*.md` | 文档三件套 | 是 |
 | `logs/` / `.work/` | 日志与中间产物 | 否 |
 

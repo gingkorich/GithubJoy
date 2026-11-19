@@ -102,7 +102,7 @@ D:\AIproject\GithubJoy\
 │  ├─ service.json             # pid / port / startedAt
 │  └─ service-token            # 每次启动重新生成
 ├─ reports/                    # 本地产物（gitignore）
-├─ docs/                       # 本仓库发布目录（Pages 源）
+├─ docs/                       # 文档目录（只放 .md）
 │  ├─ REQUIREMENTS.md / DESIGN.md / RUNBOOK.md
 │  ├─ .nojekyll                # 必须提交
 │  └─ *.html                   # 由 reports/ 复制，入库
@@ -110,7 +110,7 @@ D:\AIproject\GithubJoy\
 └─ .work/run-<RunId>/          # 每轮原始材料（gitignore）
 ```
 
-> `docs/` 既是文档目录又是 Pages 根目录：生成器只写 `docs/*.html`，不碰 `.md`；发布时 `git add` 显式列文件。
+> Pages 源是**仓库根目录**（根 `.nojekyll`），页面产物是 `reports/*.html`；`docs/` 只放 `.md`，不再存放 HTML。
 
 ---
 
@@ -400,7 +400,7 @@ listsCreated / listAddFailed
 2. 逐条：抓材料 → LLM → 校验 → 写 summaries/<id>.json（断点）→ 置 done
    失败：置 failed、记录 lastError，继续下一条
 3. 全部处理完（含失败）→ render.ps1 生成本轮 HTML（含失败项说明）
-4. publish.ps1：复制到 docs/ + .nojekyll → git add 指定文件 → commit → push
+4. publish.ps1：把 reports/ 页面加入 git + 根 `.nojekyll` → commit → push
 5. 发布成功 → migrate.ps1：快照 → 逐条迁移 → 置 moved
    发布失败 → 保留 done/published=false，退出码非 0，不迁移
 ```
@@ -491,16 +491,18 @@ mutation MoveToList($itemId: ID!, $target: [ID!]!) {
 ```
 publish.ps1 -RunId <id> [-NoPublish]
   1. 校验 gh.json.publish（repo / branch / dir / baseUrl）
-  2. 复制 reports/<run>.html、latest.html、index.html → docs/
-  3. 确保 docs/.nojekyll 存在（不存在则创建并加入提交）
+  2. 确认 reports/<run>.html、latest.html、index.html 存在
+  3. 确保仓库根 `.nojekyll` 存在（不存在则创建并加入提交）
   4. git fetch origin
      本地落后或分叉 → 中止，打印「先手动 pull / 处理冲突」；不自动 rebase
-  5. git add -- docs/<file>.html docs/latest.html docs/index.html docs/.nojekyll
+  5. git add -- reports/<file>.html reports/latest.html reports/index.html .nojekyll
   6. git diff --cached --quiet → 无变化则跳过 commit（但仍视为发布成功）
   7. git commit -m "joy: <yyyy-MM-dd> n=<n>"
   8. git push origin main
   9. 失败：本地产物保留，输出可执行建议，退出码 3
 ```
+
+- 页面地址：`<baseUrl>/reports/<file>`；根 `index.html` 只是跳转到 `reports/latest.html` 的入口。
 
 - **禁止** `git add -A`；`git status --porcelain` 中与本轮无关的改动只提示、不提交。
 - 推送后不等待 Pages 构建（通常 10–60 秒）；state 记录 `pushedAt`，页面文案只写「已推送」不写「已上线」。
@@ -895,7 +897,7 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 | AC-6 总结质量 | 抽 3 条人工核对 refs 与 sources |
 | AC-7 页面安全 | 断网打开 + 注入样例 + 打印/移动端 |
 | AC-8 状态迁移 | 统计 unread/read 数量差；`-NoPublish` 对照 |
-| AC-9 发布 | Pages 地址 + `git show --stat` 只含 `docs/*.html` |
+| AC-9 发布 | Pages 地址 + `git show --stat` 只含 `reports/*.html` 与根 `.nojekyll` |
 | AC-10 故障恢复 | 断网/中断/429 模拟，重跑不重复计费 |
 | AC-11 控制台 | 双击、扫描、2 秒内刷新、关窗释放端口 |
 | AC-12 账号与密钥 | 真实设备码登录 → 退出；掩码检查 |

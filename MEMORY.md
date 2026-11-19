@@ -210,7 +210,12 @@ M2 扫描（2026-11-19，DryRun 通过）：
 - 真实 migrate 迁移 4 条（chronytop + n3 三条），unread 60→56、read 0→4，快照 `data/state/lists-migrate-20261119-182132.json`；
 - Pages 已构建：`https://gingkorich.github.io/GithubJoy/` 200，`2026-11-19-n3.html` 15301 字节（含 cursor/plugins 与 overview/Q&A）。
 
-阅读后自动流水线（2026-11-19）：
+发布目录调整（2026-11-19）：
+- `reports/` 纳入 git（从 `.gitignore` 移除），`docs/` 只保留 `.md`，不再放 HTML；
+- Pages 源改为**仓库根 `/`**：根 `.nojekyll` + 根 `index.html` 跳转到 `reports/latest.html`；页面地址变为 `/reports/<file>`；
+- `publish.ps1` 改为直接提交 `reports/*.html` 与根 `.nojekyll`，不再复制到 `docs/`；`reports-index` 的 `url` 同步为 `.../reports/<file>`；
+- 切换 Pages 源后可能短暂出现 404/503，需 `POST /repos/.../pages/builds` 触发一次构建；
+- 实测：`/`、`/reports/latest.html`、`/reports/index.html` 均 200，旧的 `/2026-11-19-n1.html` 404；`docs/` 仅剩三个 `.md`。
 - 页面点一次「阅读」后，服务端自动串联 read → render → publish → migrate；`/api/status` 返回 `pipeline {active,stage,jobId}`，任务卡按阶段显示；
 - 移除页面「产出」模块；`/api/render`、`/api/publish`、`/api/migrate` 仍保留（命令行/调试用）；
 - 修复：`migrate.ps1` 缺少 `Get-StatePath`，迁移成功后更新 state 抛错（已补函数）；另手工把 state 从 56 修正到 55；
