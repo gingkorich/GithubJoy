@@ -193,6 +193,12 @@ M2 扫描（2026-11-19，DryRun 通过）：
 
 阈值 v3（2026-11-19）：today >100 / week >2000 / month >5000。实测 totalCount 2 / 5 / 30，去重 37；已 unread 19、已 star 1；剩余 17 全部入选（month 12 + 补齐 5），无 capped；计划 star 17、unread 60→77。
 
+M4b 发布与迁移（2026-11-19）：
+- 新增 `scripts/publish.ps1`：`reports/` → `docs/`（含 `.nojekyll`），`git add` 只列页面文件，`fetch` 检查落后，commit + push；`-DryRun` 只打印，`-NoPush` 本地提交不推送；推送成功后把 `reports-index` 与队列条目标 `published/url`（依赖 render 写入的 `ids`）。
+- 新增 `scripts/migrate.ps1`：只处理 `done + published + inUnread` 的条目，先写 `data/state/lists-<runId>.json` 快照，再 `updateUserListsForItem`（其它 List + read），置 `moved`；支持 `-Rollback <runId>` 与 `-DryRun`。
+- 实测：`publish -DryRun` 列 4 个文件；`publish -NoPush` 提交 `5f8618b`（仅 `docs/.nojekyll`、`docs/2026-11-19-n1.html`、`docs/index.html`、`docs/latest.html`）；`migrate -DryRun` 临时标记发布后选中 1 条，目标 read List。
+- 本地 `gh.json` 补了 `publish {repo: gingkorich/GithubJoy, branch: master, dir: docs, baseUrl: …}`；仓库尚无 `origin`，未真实推送。
+- 踩坑：PowerShell 变量大小写不敏感，脚本内部 `$runId` 覆盖了参数 `$RunId`（render/migrate），导致 `-RunId` 过滤恒为空；内部变量统一改名 `$runTag`。
 M4a 渲染（2026-11-19）：
 - 新增 `scripts/render.ps1`、`templates/report.html.tpl`、`templates/index.html.tpl`、`templates/labels.json`（中文文案外置，脚本纯 ASCII）；
 - 产物：`reports/<date>-n<n>.html`、`latest.html`、`index.html`、`data/reports-index.json`（published=false，待 M4b）；

@@ -786,6 +786,11 @@ git pull --ff-only
 | 渲染最近 5 条 | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render.ps1 -N 5` |
 | 渲染指定项目 | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render.ps1 -OnlyId owner/name` |
 | 预览报告 | 打开 `reports\latest.html` |
+| 发布干跑 | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish.ps1 -DryRun` |
+| 发布（只本地提交、不推送） | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish.ps1 -NoPush` |
+| 发布（真实推送） | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish.ps1` |
+| 迁移干跑 | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migrate.ps1 -DryRun` |
+| 回滚迁移 | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migrate.ps1 -Rollback <migrate-runId>` |
 | 批量补读 | `.\run-joy.bat -IdsFile ids.txt -NoPublish` |
 | 省钱模式 | `.\run-joy.bat 2 -Lite` |
 | 一致性修复 | `.\run-joy.bat -Repair -DryRun` |
@@ -841,4 +846,6 @@ git pull --ff-only
 | `read.ps1 -OnlyId ... -Lite`（真实） | ✅ 已回填（2026-11-19）：overview 126 字、Q&A 6 组、warnings 0；summary 落盘、队列置 done、state.lastRead 更新 |
 | 控制台「阅读」按钮（`/api/read`） | ✅ 已回填（2026-11-19）：DryRun n=2 通过；NoWrite n=1 真实调用成功（1 成功 / 0 失败 / 1 次 LLM）；n=0 返回 400 |
 | `render.ps1`（本地渲染） | ✅ 已回填（2026-11-19）：chronytop 生成 7823 字节报告（1 卡片 / 6 问答），latest 与 index 同步；XSS 样例全部转义 |
+| `publish.ps1 -DryRun/-NoPush` | ✅ 已回填（2026-11-19）：DryRun 列出 4 个文件；NoPush 提交 `5f8618b`，仅 docs/ 下 4 个文件，未推送 |
+| `migrate.ps1 -DryRun` | ✅ 已回填（2026-11-19）：临时标记 published 后选中 1 条，目标为 read List；未真实迁移（等待真实发布） |
 | AC-1～AC-14 实测结果 | M2–M5 逐条 |

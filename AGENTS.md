@@ -8,7 +8,7 @@ GitHub Trending 每日简报：扫描 today / week / month 榜单 → 未收藏�
 
 ## 当前状态
 
-- 阶段：**M1/M2/M3 完成；M4a 本地渲染完成（含 XSS 转义测试）；M4b 发布与迁移未实现**。
+- 阶段：**M1/M2/M3/M4a 完成；M4b 发布与迁移脚本已实现并干跑验证，真实推送/迁移待配置 remote 与 Pages**。
 - 已有：`MEMORY.md`、`docs/*`；代码：`joy.bat`、`scan.bat`、`service/*`（扫描按钮 + 进度 + 概览）、`scripts/scan.ps1`、`scripts/lib/*`、`config.sample.json`。
 - 未创建：`read.ps1`、`render.ps1`、`publish.ps1`、`migrate.ps1`；控制台尚未接扫描按钮。
 

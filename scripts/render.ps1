@@ -25,15 +25,15 @@ $dataDir = Join-Path $root 'data'
 $sumDir = Join-Path $dataDir 'summaries'
 $L = Read-JoyJsonFile (Join-Path $root 'templates\labels.json')
 if (-not $OutDir) { $OutDir = Join-Path $root 'reports' }
-$runId = 'render-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+$runTag = 'render-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
 $started = Get-Date
 
 if (-not $LogFile) { $LogFile = Join-Path $root ('logs\render-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log') }
 Initialize-JoyLog $LogFile
-Write-JoyLog ("render {0} start (N={1}, runId={2}, out={3})" -f $runId, $N, $RunId, $OutDir)
+Write-JoyLog ("render {0} start (N={1}, runId={2}, out={3})" -f $runTag, $N, $RunId, $OutDir)
 
 $script:Result = [ordered]@{
-  ok = $false; runId = $runId
+  ok = $false; runId = $runTag
   startedAt = $started.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
   durationMs = 0; count = 0; qaTotal = 0
   file = $null; latest = $null; indexFile = $null
@@ -234,7 +234,7 @@ $html = $html.Replace('{{SUBTITLE}}', (ConvertTo-JoyHtml ($L.reportSubtitleTpl.R
 $html = $html.Replace('{{STATS}}', (ConvertTo-JoyHtml $statsText))
 $html = $html.Replace('{{CARDS}}', $cards.ToString())
 $html = $html.Replace('{{FAILED}}', '')
-$footer = $L.footerTpl.Replace('{runId}', $runId)
+$footer = $L.footerTpl.Replace('{runId}', $runTag)
 $html = $html.Replace('{{FOOTER}}', (ConvertTo-JoyHtml $footer))
 
 if (-not (Test-Path -LiteralPath $OutDir)) { New-Item -ItemType Directory -Force -Path $OutDir | Out-Null }
@@ -261,6 +261,7 @@ if (-not $NoIndex) {
   $name = Split-Path -Leaf $file
   $entry = [ordered]@{
     file = $name; date = $dateStr; count = $selected.Count; qa = $qaTotal
+    ids = @($selected | ForEach-Object { [string]$_.summary.id })
     createdAt = (New-IsoNow); published = $false; url = ''
   }
   $entries = @($entry) + @($entries | Where-Object { [string]$_.file -ne $name })
