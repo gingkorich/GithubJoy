@@ -1,0 +1,154 @@
+:root {
+  --bg: #f7f7f8;
+  --card: #ffffff;
+  --fg: #1d1f23;
+  --muted: #6a6f78;
+  --line: #e3e4e8;
+  --accent: #2f6feb;
+  --ok: #1a7f37;
+  --bad: #c62828;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181d;
+    --card: #1e2127;
+    --fg: #e7e9ee;
+    --muted: #9aa1ac;
+    --line: #2e333b;
+    --accent: #6a9bff;
+    --ok: #3fb950;
+    --bad: #ff7b72;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.brand { font-weight: 600; }
+.tag {
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  margin-left: 6px;
+}
+.tag.running { color: var(--accent); border-color: var(--accent); }
+.tag.succeeded { color: var(--ok); border-color: var(--ok); }
+.tag.failed, .tag.cancelled { color: var(--bad); border-color: var(--bad); }
+
+.who { color: var(--muted); font-size: 14px; }
+.who.on { color: var(--ok); }
+
+main {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 20px;
+  display: grid;
+  gap: 16px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+
+h2 {
+  margin: 0 0 12px;
+  font-size: 15px;
+  letter-spacing: .02em;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 4px 12px;
+  margin: 0;
+}
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; word-break: break-all; }
+
+.row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+
+button {
+  font: inherit;
+  padding: 7px 14px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.ghost {
+  background: transparent;
+  color: var(--fg);
+  border-color: var(--line);
+}
+
+.hint, .foot {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 10px 0 0;
+}
+.hint.bad { color: var(--bad); }
+
+.chk {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  user-select: none;
+}
+.chk input { accent-color: var(--accent); }
+
+.code-line { margin: 0 0 8px; }
+.code-line strong {
+  font-family: Consolas, monospace;
+  font-size: 18px;
+  letter-spacing: .08em;
+}
+
+pre {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  font: 12.5px/1.55 Consolas, "Courier New", monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.out { max-height: 260px; }
+
+code {
+  font-family: Consolas, monospace;
+  background: var(--bg);
+  padding: 1px 4px;
+  border-radius: 4px;
+}

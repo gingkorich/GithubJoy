@@ -1,0 +1,17 @@
+# secrets / local config
+gh.json
+llm.json
+*.secret
+
+# runtime data
+data/
+reports/
+cache/
+logs/
+.work/
+node_modules/
+
+# tooling
+*.log
+*.bak
+*.tmp
