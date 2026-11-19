@@ -50,19 +50,14 @@ function relTime(iso) {
 function renderStatus(s) {
   const sc = s.scan;
   if (sc) {
-    const rel = relTime(sc.lastAt);
-    setText('lastScan', fmtTime(sc.lastAt) + (rel ? '（' + rel + '）' : ''));
+    setText('lastScan', fmtTime(sc.lastAt));
     setText('lastAdded', sc.added);
   } else {
     setText('lastScan', '尚未扫描');
     setText('lastAdded', '—');
   }
   setText('unreadCount', s.unread ? s.unread.count : '—');
-  const q = s.queue || {};
-  setText('queueStat',
-    '待读 ' + (q.pending || 0) + ' / 完成 ' + (q.done || 0) +
-    ' / 失败 ' + (q.failed || 0) + ' / 已读 ' + (q.moved || 0));
-  setText('readPending', s.unread ? s.unread.count : (q.pending || 0));
+  setText('readPending', s.unread ? s.unread.count : '—');
 
   const rd = s.read;
   if (rd) {
@@ -171,11 +166,10 @@ $('btnLogin').addEventListener('click', async () => {
 });
 
 $('btnScan').addEventListener('click', async () => {
-  const dry = $('chkDry').checked;
   try {
     $('btnScan').disabled = true;
-    const r = await api('/api/scan', { method: 'POST', body: JSON.stringify({ dryRun: dry }) });
-    activeJob = { id: r.jobId, kind: 'scan', state: 'running', dryRun: dry, lines: [], progress: { phase: 'start', done: 0, total: 5 } };
+    const r = await api('/api/scan', { method: 'POST', body: '{}' });
+    activeJob = { id: r.jobId, kind: 'scan', state: 'running', dryRun: false, lines: [], progress: { phase: 'start', done: 0, total: 5 } };
     renderJob(activeJob);
     pollTimer = setInterval(refresh, 1000);
   } catch (e) {
