@@ -48,13 +48,6 @@ function relTime(iso) {
 }
 
 function renderStatus(s) {
-  setText('svc', 'v' + s.service.version + ' @ ' + s.service.port);
-  setText('node', s.service.node);
-  setText('cwd', s.service.workDir);
-
-  const n = s.network || {};
-  setText('netProxy', n.proxy ? (n.proxy + '（' + (n.source === 'system' ? '系统代理' : '配置') + '）') : '直连');
-
   const sc = s.scan;
   if (sc) {
     const rel = relTime(sc.lastAt);
