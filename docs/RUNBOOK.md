@@ -100,14 +100,15 @@ repo, read:org, gist, user
 
 ### 2.4 配置模型
 
-页面「模型区」填 `base_url` / `model` / `api_key` → **测试连接** → **保存**。
+页面「模型」区填 `接口`（如 `https://api.deepseek.com/v1`）、`模型`（如 `deepseek-chat`）、`API Key`、`超时` → **测试连接** → **保存**。
 
-- 保存写入 `llm.json`，并立即 `icacls` 收紧为仅当前用户；
-- 页面只回显掩码（`sk-****abcd`），**不会**再显示明文；
+- 保存写入 `llm.json`，并立即 `icacls` 收紧为仅当前用户完全控制；
+- 页面只回显掩码（`sk-****abcd`），**不会**再显示明文；Key 输入框留空表示保留原值；
+- 测试连接只发一次 `max_tokens=1` 的请求，失败会显示 HTTP 状态与模型返回的错误；
 - 也可以手工创建 `llm.json`（字段见 `DESIGN.md` 附录 A 与 FR-10），然后执行：
 
 ```powershell
-icacls .\llm.json /inheritance:r /grant:r "$env:USERNAME:(R,W)"
+icacls .\llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 ```
 
 ### 2.5 确认业务配置
@@ -253,7 +254,7 @@ gh auth logout --hostname github.com
 4. 收紧权限：
 
 ```powershell
-icacls .\gh.json /inheritance:r /grant:r "$env:USERNAME:(R,W)"
+icacls .\gh.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 ```
 
 5. 重启服务，页面应显示用户名。
@@ -566,8 +567,8 @@ Rename-Item .\data "data.before-restore-$(Get-Date -f yyyyMMdd-HHmm)"
 Expand-Archive -LiteralPath 'D:\Backup\githubjoy-20261119-2100.zip' -DestinationPath . -Force
 
 # 4) 收紧密钥权限
-icacls .\gh.json  /inheritance:r /grant:r "$env:USERNAME:(R,W)"
-icacls .\llm.json /inheritance:r /grant:r "$env:USERNAME:(R,W)"
+icacls .\gh.json  /inheritance:r /grant:r "$env:USERNAME:(F)"
+icacls .\llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 
 # 5) 启动并核对
 .\joy.bat
@@ -786,7 +787,7 @@ git pull --ff-only
 | 查看登录 | `gh auth status --hostname github.com` |
 | 登录 / 退出 | `gh auth login …` / `gh auth logout --hostname github.com` |
 | 查端口占用 | `Get-NetTCPConnection -LocalPort 8787` |
-| 收紧密钥权限 | `icacls .\llm.json /inheritance:r /grant:r "$env:USERNAME:(R,W)"` |
+| 收紧密钥权限 | `icacls .\llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"` |
 | 测直连 GitHub | `curl.exe -sS -o NUL -w "%{http_code}" --max-time 10 https://github.com` |
 | 测代理 | `curl.exe -sS -o NUL -w "%{http_code}" --max-time 10 --proxy http://127.0.0.1:10808 https://github.com` |
 

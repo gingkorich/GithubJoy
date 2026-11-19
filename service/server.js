@@ -16,6 +16,7 @@ const JOBS = path.join(DATA, 'jobs');
 const PUB = path.join(__dirname, 'public');
 const TOKEN_FILE = path.join(DATA, 'service-token');
 const SERVICE_FILE = path.join(DATA, 'service.json');
+const LLM_FILE = path.join(ROOT, 'llm.json');
 const VERSION = '0.1.0-m1';
 
 const args = process.argv.slice(2);
@@ -71,6 +72,113 @@ function dashboard() {
     unread: st.unreadTotal || null,
     queue: counts,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* llm config                                                          */
+/* ------------------------------------------------------------------ */
+
+function readLlm() {
+  const o = readJsonFile(LLM_FILE, null) || {};
+  return {
+    baseUrl: String(o.base_url || ''),
+    model: String(o.model || ''),
+    apiKey: String(o.api_key || ''),
+    timeoutSec: Number(o.timeout_sec || 60),
+    maxRetries: Number(o.max_retries || 3),
+  };
+}
+
+function maskKey(k) {
+  if (!k) return null;
+  if (k.length <= 8) return '****';
+  return k.slice(0, 4) + '****' + k.slice(-4);
+}
+
+function llmView() {
+  const c = readLlm();
+  return {
+    configured: !!(c.baseUrl && c.model && c.apiKey),
+    baseUrl: c.baseUrl,
+    model: c.model,
+    timeoutSec: c.timeoutSec,
+    maxRetries: c.maxRetries,
+    keyMask: maskKey(c.apiKey),
+  };
+}
+
+function applyLlmAcl() {
+  try {
+    const user = process.env.USERNAME || '';
+    if (!user) return 'no_user';
+    const r = spawnSync('icacls', [LLM_FILE, '/inheritance:r', '/grant:r', user + ':(F)'], { encoding: 'utf8' });
+    return r.status === 0 ? null : 'acl_failed';
+  } catch (_) {
+    return 'acl_failed';
+  }
+}
+
+function saveLlm(body) {
+  const cur = readLlm();
+  const baseUrl = String(body.baseUrl !== undefined ? body.baseUrl : cur.baseUrl).trim().replace(/\/+$/, '');
+  const model = String(body.model !== undefined ? body.model : cur.model).trim();
+  let apiKey = cur.apiKey;
+  if (Object.prototype.hasOwnProperty.call(body, 'apiKey')) {
+    const k = String(body.apiKey || '').trim();
+    if (k) apiKey = k;
+  }
+  let timeoutSec = Number(body.timeoutSec !== undefined ? body.timeoutSec : cur.timeoutSec);
+  if (!Number.isFinite(timeoutSec)) timeoutSec = 60;
+  timeoutSec = Math.max(10, Math.min(300, Math.round(timeoutSec)));
+
+  if (!/^https?:\/\//i.test(baseUrl)) {
+    const e = new Error('base_url must start with http:// or https://');
+    e.status = 400; throw e;
+  }
+  if (!model) {
+    const e = new Error('model is required');
+    e.status = 400; throw e;
+  }
+  if (!apiKey) {
+    const e = new Error('api_key is required');
+    e.status = 400; throw e;
+  }
+
+  // Windows: replacing a file requires delete permission, so fix ACL before the atomic rename.
+  if (fs.existsSync(LLM_FILE)) applyLlmAcl();
+  writeJson(LLM_FILE, {
+    base_url: baseUrl, api_key: apiKey, model,
+    timeout_sec: timeoutSec, max_retries: cur.maxRetries || 3, temperature: 0.2,
+  });
+
+  const warning = applyLlmAcl();
+  return { warning };
+}
+
+async function testLlm() {
+  const c = readLlm();
+  if (!c.baseUrl || !c.model || !c.apiKey) return { ok: false, error: 'not_configured' };
+  const url = /\/chat\/completions$/i.test(c.baseUrl) ? c.baseUrl : c.baseUrl + '/chat/completions';
+  const started = Date.now();
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + c.apiKey },
+      body: JSON.stringify({
+        model: c.model,
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 1,
+        temperature: 0,
+      }),
+      signal: AbortSignal.timeout(Math.min(c.timeoutSec, 30) * 1000),
+    });
+    const text = await res.text();
+    const latencyMs = Date.now() - started;
+    if (res.ok) return { ok: true, latencyMs, status: res.status, model: c.model };
+    return { ok: false, latencyMs, status: res.status, error: text.slice(0, 300) };
+  } catch (e) {
+    return { ok: false, latencyMs: Date.now() - started, error: String((e && e.message) || e) };
+  }
 }
 
 function stopService() {
@@ -550,6 +658,7 @@ const server = http.createServer(async (req, res) => {
           return { proxy: d.proxy, source: d.source, autoDetect: !!NET.autoDetect };
         })(),
         ...dashboard(),
+        llm: llmView(),
         job: jobView(job, 50),
       });
     }
@@ -563,6 +672,30 @@ const server = http.createServer(async (req, res) => {
 
     // Remaining endpoints are actions: require the local token.
     if (!tokenOk(req)) return sendJson(res, 403, { error: 'bad_token' });
+
+    if (p === '/api/llm' && req.method === 'GET') {
+      return sendJson(res, 200, llmView());
+    }
+
+    if (p === '/api/llm' && req.method === 'PUT') {
+      let body = {};
+      try {
+        const raw = await readBody(req);
+        body = raw && raw.trim() ? JSON.parse(raw) : {};
+      } catch (_) {
+        return sendJson(res, 400, { error: 'invalid_json' });
+      }
+      try {
+        const r = saveLlm(body);
+        return sendJson(res, 200, Object.assign({ ok: true, warning: r.warning }, llmView()));
+      } catch (e) {
+        return sendJson(res, e.status || 400, { error: String(e.message || e) });
+      }
+    }
+
+    if (p === '/api/llm/test' && req.method === 'POST') {
+      return sendJson(res, 200, await testLlm());
+    }
 
     if (p === '/api/scan' && req.method === 'POST') {
       let body = {};

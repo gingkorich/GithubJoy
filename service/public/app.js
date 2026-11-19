@@ -71,6 +71,8 @@ function renderStatus(s) {
     ' / 失败 ' + (q.failed || 0) + ' / 已读 ' + (q.moved || 0));
 
   const g = s.gh || {};
+  const llm = s.llm || {};
+  setText('llmState', llm.configured ? ('已配置（' + llm.model + '）') : '未配置');
   setText('ghInstalled', g.installed ? '已安装' : '未安装');
   setText('ghVersion', g.version);
   setText('ghAuth', g.auth ? '已登录' : '未登录');
@@ -202,5 +204,67 @@ $('btnProbe').addEventListener('click', async () => {
   }
 });
 
+async function loadLlm() {
+  try {
+    const r = await api('/api/llm', { auth: true });
+    const active = document.activeElement;
+    if (active !== $('llmBase')) $('llmBase').value = r.baseUrl || '';
+    if (active !== $('llmModel')) $('llmModel').value = r.model || '';
+    if (active !== $('llmTimeout')) $('llmTimeout').value = r.timeoutSec || 60;
+    $('llmKey').value = '';
+    $('llmKey').placeholder = r.keyMask ? ('已保存 ' + r.keyMask + '，留空不修改') : 'sk-...';
+    setText('llmState', r.configured ? ('已配置（' + r.model + '）') : '未配置');
+  } catch (e) {
+    setText('llmState', '读取失败：' + e.message);
+  }
+}
+
+$('btnLlmSave').addEventListener('click', async () => {
+  const body = {
+    baseUrl: $('llmBase').value.trim(),
+    model: $('llmModel').value.trim(),
+    timeoutSec: Number($('llmTimeout').value || 60),
+  };
+  const k = $('llmKey').value.trim();
+  if (k) body.apiKey = k;
+  $('btnLlmSave').disabled = true;
+  $('llmHint').className = 'hint';
+  $('llmHint').textContent = '保存中…';
+  try {
+    const r = await api('/api/llm', { method: 'PUT', body: JSON.stringify(body) });
+    $('llmKey').value = '';
+    $('llmHint').textContent = '已保存' + (r.warning === 'acl_failed' ? '（警告：文件权限未收紧）' : '');
+    await loadLlm();
+    await refresh();
+  } catch (e) {
+    $('llmHint').textContent = '保存失败：' + e.message;
+    $('llmHint').className = 'hint bad';
+  } finally {
+    $('btnLlmSave').disabled = false;
+  }
+});
+
+$('btnLlmTest').addEventListener('click', async () => {
+  $('btnLlmTest').disabled = true;
+  $('llmHint').className = 'hint';
+  $('llmHint').textContent = '测试中…';
+  try {
+    const r = await api('/api/llm/test', { method: 'POST', body: '{}' });
+    if (r.ok) {
+      $('llmHint').textContent = '连接成功：' + r.latencyMs + ' ms（' + r.model + '）';
+      $('llmHint').className = 'hint ok';
+    } else {
+      $('llmHint').textContent = '连接失败：' + (r.error || ('HTTP ' + r.status));
+      $('llmHint').className = 'hint bad';
+    }
+  } catch (e) {
+    $('llmHint').textContent = '测试失败：' + e.message;
+    $('llmHint').className = 'hint bad';
+  } finally {
+    $('btnLlmTest').disabled = false;
+  }
+});
+
 refresh();
+loadLlm();
 setInterval(refresh, 3000);

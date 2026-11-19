@@ -538,7 +538,9 @@ server.listen(port, '127.0.0.1', () => {
 | POST | `/api/gh/logout` | — | `200 {ok:true}` / `500 {error}` |
 | GET | `/api/llm` | — | `{baseUrl,model,timeoutSec,keyMask,configured}` |
 | PUT | `/api/llm` | `{baseUrl,model,apiKey?,timeoutSec?}` | `200 {ok,keyMask}`；校验失败 `400` |
-| POST | `/api/llm/test` | — | `{ok,latencyMs,error?}` |
+| POST | `/api/llm/test` | — | `{ok,latencyMs,status,error?}` |
+
+> 模型配置的读写由 Node 完成：`PUT` 校验后原子写入 `llm.json`，并用 `icacls` 只授当前用户 `(F)`（Windows 下替换文件需要删除权限，只给 `(R,W)` 会导致 rename 报 EPERM）；`/api/llm/test` 由 Node 直接 `fetch` 模型的 `/chat/completions`（不走 GitHub API），只返回状态与截断后的错误，不落盘。
 
 `GET /api/status` 示例：
 
@@ -809,7 +811,7 @@ llm.json（明文，ACL 仅当前用户）──▶ llm.ps1 读取 ──▶ Aut
 
 ```powershell
 # 保存 llm.json 后
-icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(R,W)"
+icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 ```
 
 - 同样处理 `gh.json`、`data/service-token`；
@@ -916,7 +918,8 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(R,W)"
 | 里程碑 | 交付 | 完成判据 |
 |---|---|---|
 | M0 骨架 | `joy.bat`、`service/server.js`、静态页、`/api/status`（假数据） | 双击 10 秒内出页面；令牌/ Host 校验生效；关窗释放端口 |
-| M1 认证 | `status.ps1`、`/api/gh/*`、`/api/llm`（读写 + 测试） | 设备码登录/退出走通；解决 R1/R2；密钥只显示掩码 |
+| M1 认证 | `gh` 状态/登录/退出、Lists 只读探针 | 设备码登录/退出走通；R1 通过；R2 读取通过 |
+| M3a 模型配置 | `/api/llm`（读写 + 测试）、页面「模型」区 | 保存后只显示掩码；测试连接返回状态与延迟 |
 | M2 扫描 | `scan.ps1`（search → 去重 → queue → Lists → star），先 `-DryRun` | 干跑输出统计且不写远端；再真实写入，AC-1/2/3/14 通过 |
 | M3 阅读 | `read.ps1` + prompts + `llm.ps1` 校验 | `-NoPublish` 跑 `n=3`，产出 3 份 summary；AC-6/13 通过 |
 | M4 渲染发布 | `render.ps1`、`publish.ps1`、`migrate.ps1` | `-NoPublish` 本地页面正确；真实发布后 Pages 可访问；AC-7/8/9 通过 |

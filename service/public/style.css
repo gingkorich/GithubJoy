@@ -88,6 +88,16 @@ h2 {
 }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; word-break: break-all; }
+.kv input {
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13.5px/1.4 Consolas, "Segoe UI", sans-serif;
+}
+.kv input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
 
@@ -113,6 +123,7 @@ button.ghost {
   margin: 10px 0 0;
 }
 .hint.bad { color: var(--bad); }
+.hint.ok { color: var(--ok); }
 
 .chk {
   display: inline-flex;

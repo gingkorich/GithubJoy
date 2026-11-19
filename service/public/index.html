@@ -57,6 +57,22 @@
     <p class="hint">登录会打开浏览器并显示一次性代码；本页会同步显示代码与状态。5 分钟未完成自动超时。</p>
   </section>
 
+  <section class="card">
+    <h2>模型</h2>
+    <dl class="kv">
+      <dt>状态</dt><dd id="llmState">—</dd>
+      <dt>接口</dt><dd><input id="llmBase" type="text" placeholder="https://api.deepseek.com/v1" spellcheck="false"></dd>
+      <dt>模型</dt><dd><input id="llmModel" type="text" placeholder="deepseek-chat" spellcheck="false"></dd>
+      <dt>API Key</dt><dd><input id="llmKey" type="password" placeholder="sk-..." autocomplete="off"></dd>
+      <dt>超时（秒）</dt><dd><input id="llmTimeout" type="number" min="10" max="300" value="60"></dd>
+    </dl>
+    <div class="row">
+      <button id="btnLlmSave">保存</button>
+      <button id="btnLlmTest" class="ghost">测试连接</button>
+    </div>
+    <p class="hint" id="llmHint">保存后写入 llm.json，并收紧为仅当前用户可读。</p>
+  </section>
+
   <section class="card" id="jobCard" hidden>
     <h2>任务 <span id="jobState" class="tag"></span> <span id="jobKind" class="tag"></span></h2>
     <p class="code-line" id="codeLine">一次性代码：<strong id="jobCode">—</strong></p>

@@ -4,7 +4,7 @@
 
 ## 状态
 
-**需求 + 设计 + 手册 v1.2 完成；M1 认证探针 + M2 扫描已落地并真实小批验证，阅读/发布未实现。** 文档：[`REQUIREMENTS.md`](docs/REQUIREMENTS.md)、[`DESIGN.md`](docs/DESIGN.md)、[`RUNBOOK.md`](docs/RUNBOOK.md)。当前可运行：双击 `joy.bat` 起本地服务（`http://127.0.0.1:8787/`），页面可看 gh 状态、**自动探测系统代理**、走设备码登录/退出、探测 Lists 读取权限；`scan.bat` 可扫描（`-DryRun` / `-MaxAdd N` / `-NoStar`），已真实小批验证。技术核实见 [`MEMORY.md`](MEMORY.md)，代理约定见 [`AGENTS.md`](AGENTS.md)。
+**需求 + 设计 + 手册 v1.2 完成；M1 认证探针 + M2 扫描已落地并真实小批验证，阅读/发布未实现。** 文档：[`REQUIREMENTS.md`](docs/REQUIREMENTS.md)、[`DESIGN.md`](docs/DESIGN.md)、[`RUNBOOK.md`](docs/RUNBOOK.md)。当前可运行：双击 `joy.bat` 起本地服务（`http://127.0.0.1:8787/`），页面可看 gh 状态、**自动探测系统代理**、走设备码登录/退出、探测 Lists 读取权限、**配置模型并测试连接**；`scan.bat` 可扫描（`-DryRun` / `-MaxAdd N` / `-NoStar`），已真实小批验证。技术核实见 [`MEMORY.md`](MEMORY.md)，代理约定见 [`AGENTS.md`](AGENTS.md)。
 
 ## 讨论结论速览
 

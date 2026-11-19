@@ -193,6 +193,11 @@ M2 扫描（2026-11-19，DryRun 通过）：
 
 阈值 v3（2026-11-19）：today >100 / week >2000 / month >5000。实测 totalCount 2 / 5 / 30，去重 37；已 unread 19、已 star 1；剩余 17 全部入选（month 12 + 补齐 5），无 capped；计划 star 17、unread 60→77。
 
+M3a 模型配置（2026-11-19）：
+- 新增 `GET/PUT /api/llm`、`POST /api/llm/test`，页面「模型」区（接口/模型/Key/超时/保存/测试）；
+- 写入 `llm.json` 原子替换，ACL 只授当前用户 `(F)`（实测 `(R,W)` 会因缺少删除权限导致 rename EPERM）；
+- 实测：PUT 保存 → 掩码 `sk-t****abcd`；不带 Key 的 PUT 保留原值；非法 URL 返回 400；测试连接命中 DeepSeek（171ms，401 假 Key，错误被截断返回）；删除 `llm.json` 后回到未配置。
+
 关键实测（2026-11-19）：**Star List 只保留已 star 的仓库**。此前 `-NoStar` 加的 5 个条目在约 1 小时后从 `unread` 消失（40→35），这 5 个 `viewerHasStarred=false`，剩余 35 个全部 true。因此流程改为「先 star → 再写 List」，`-NoStar` 只做计划、不写 List；队列里 `inUnread=false` 的条目下次由 `toEnsure` 补 star + 补 List。
 
 代理问题（2026-11-19 实测）：
