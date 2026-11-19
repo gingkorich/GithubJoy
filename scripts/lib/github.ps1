@@ -112,6 +112,53 @@ query($id: ID!, $cursor: String, $n: Int!) {
   return @{ ok = $true; names = $names.ToArray(); error = $null }
 }
 
+function Get-JoyListItemsDetailed {
+  param([string]$Token, [string]$ListId, [string]$Proxy, [int]$Max = 300)
+
+  $q = @'
+query($id: ID!, $n: Int!, $cursor: String) {
+  node(id: $id) {
+    ... on UserList {
+      items(first: $n, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          ... on Repository {
+            id nameWithOwner stargazerCount description pushedAt isArchived
+            primaryLanguage { name }
+          }
+        }
+      }
+    }
+  }
+}
+'@
+
+  $out = @()
+  $cursor = $null
+  for ($i = 0; $i -lt 5; $i++) {
+    $r = Invoke-JoyGraphQL -Token $Token -Query $q -Variables @{ id = $ListId; n = 100; cursor = $cursor } -Proxy $Proxy
+    if (-not $r.ok) { return @{ ok = $false; items = @(); error = $r.error } }
+    $conn = $r.data.node.items
+    foreach ($n in @($conn.nodes)) {
+      if ($null -eq $n) { continue }
+      $lang = ''
+      if ($n.primaryLanguage) { $lang = [string]$n.primaryLanguage.name }
+      $out += [pscustomobject]@{
+        id = [string]$n.id
+        fullName = [string]$n.nameWithOwner
+        stars = [int]$n.stargazerCount
+        description = [string]$n.description
+        language = $lang
+        pushedAt = [string]$n.pushedAt
+        archived = [bool]$n.isArchived
+      }
+    }
+    if (-not $conn.pageInfo.hasNextPage -or $out.Count -ge $Max) { break }
+    $cursor = [string]$conn.pageInfo.endCursor
+  }
+  return @{ ok = $true; items = @($out | Select-Object -First $Max); error = $null }
+}
+
 function New-JoyList {
   param([string]$Token, [string]$Name, [string]$Description, [string]$Proxy)
   $q = @'

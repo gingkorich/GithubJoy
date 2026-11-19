@@ -193,6 +193,12 @@ M2 扫描（2026-11-19，DryRun 通过）：
 
 阈值 v3（2026-11-19）：today >100 / week >2000 / month >5000。实测 totalCount 2 / 5 / 30，去重 37；已 unread 19、已 star 1；剩余 17 全部入选（month 12 + 补齐 5），无 capped；计划 star 17、unread 60→77。
 
+阅读源改为 unread List（2026-11-19）：
+- 背景：GitHub unread 60 个，但本地「待读」只有 23；原有 35 个从未入队（scan 把它们当 `already_unread` 跳过），导致永远读不到。
+- 改动：`read.ps1` 改为**直接以 unread List 为准**，按 List 顺序取前 n；队列降级为状态镜像，List 中有而队列中没有的条目自动补建（nodeId/stars/description 来自 GraphQL）；`-DryRun` 不写队列；`-NoLlm` 不再置 `summarizing`（修复上次卡住）。
+- 页面「待读」改为显示 unread List 总数；「队列」仍显示本地镜像状态。
+- 实测：unread List 60 项，DryRun 选中 5（cursor/plugins 等）且 `created=5`；`-N 1 -Lite -NoLlm` 镜像 cursor/plugins 到队列（seq=26，stars=17385），状态保持 pending。
+
 M4b 发布与迁移（2026-11-19）：
 - 新增 `scripts/publish.ps1`：`reports/` → `docs/`（含 `.nojekyll`），`git add` 只列页面文件，`fetch` 检查落后，commit + push；`-DryRun` 只打印，`-NoPush` 本地提交不推送；推送成功后把 `reports-index` 与队列条目标 `published/url`（依赖 render 写入的 `ids`）。
 - 新增 `scripts/migrate.ps1`：只处理 `done + published + inUnread` 的条目，先写 `data/state/lists-<runId>.json` 快照，再 `updateUserListsForItem`（其它 List + read），置 `moved`；支持 `-Rollback <runId>` 与 `-DryRun`。

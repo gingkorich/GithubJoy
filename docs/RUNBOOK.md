@@ -172,6 +172,10 @@ scanned = added + already_unread + already_read + already_done + denied
 
 在页面输入 `5` → **阅读 5 个**（与 `run-joy.bat 5` 等价）。
 
+- 阅读源是 **GitHub `unread` List**（按 List 顺序），不是本地队列；队列只是状态镜像，遇到 List 里有、队列里没有的项目会自动补建；
+- 页面「待读」显示 unread List 总数；「队列」显示本地镜像状态；
+- 已有 summary 的条目会自动跳过（`-Force` 重做）。
+
 进度会显示：阶段 → 已处理条数 → 日志尾部。中途可关闭页面（服务仍在跑）；重开页面会自动接上进度。
 
 ### 3.3 无界面方式
@@ -848,4 +852,6 @@ git pull --ff-only
 | `render.ps1`（本地渲染） | ✅ 已回填（2026-11-19）：chronytop 生成 7823 字节报告（1 卡片 / 6 问答），latest 与 index 同步；XSS 样例全部转义 |
 | `publish.ps1 -DryRun/-NoPush` | ✅ 已回填（2026-11-19）：DryRun 列出 4 个文件；NoPush 提交 `5f8618b`，仅 docs/ 下 4 个文件，未推送 |
 | `migrate.ps1 -DryRun` | ✅ 已回填（2026-11-19）：临时标记 published 后选中 1 条，目标为 read List；未真实迁移（等待真实发布） |
+| `read.ps1 -DryRun`（以 unread List 为准） | ✅ 已回填（2026-11-19）：List 60 项、选中 5 个（cursor/plugins 等）、`created=5`；DryRun 未写队列 |
+| `read.ps1 -N 1 -Lite -NoLlm` | ✅ 已回填（2026-11-19）：镜像 1 条到队列（seq/nodeId/stars 正确），只抓材料不调模型，状态保持 pending |
 | AC-1～AC-14 实测结果 | M2–M5 逐条 |

@@ -69,7 +69,7 @@ function renderStatus(s) {
   setText('queueStat',
     '待读 ' + (q.pending || 0) + ' / 完成 ' + (q.done || 0) +
     ' / 失败 ' + (q.failed || 0) + ' / 已读 ' + (q.moved || 0));
-  setText('readPending', q.pending || 0);
+  setText('readPending', s.unread ? s.unread.count : (q.pending || 0));
 
   const rd = s.read;
   if (rd) {

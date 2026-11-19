@@ -392,7 +392,7 @@ listsCreated / listAddFailed
 ### 5.1 一轮 read 的顺序
 
 ```
-1. 选条目：pending 前 n（或 -OnlyId / -IdsFile）→ 先落盘置 summarizing
+1. 选条目：从 **unread List** 按 List 顺序取前 n（或 -OnlyId / -IdsFile，必须在 List 中）→ 队列缺失则补建镜像 → 置 summarizing
 2. 逐条：抓材料 → LLM → 校验 → 写 summaries/<id>.json（断点）→ 置 done
    失败：置 failed、记录 lastError，继续下一条
 3. 全部处理完（含失败）→ render.ps1 生成本轮 HTML（含失败项说明）

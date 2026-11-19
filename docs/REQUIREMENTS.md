@@ -186,7 +186,7 @@ GitHub Joy 把这件事做成一条流水线：
   - 双击运行 → 提示 `How many projects to read today? (1-20, default 5)`；
   - `run-joy.bat 5` → 直接使用参数；
   - 非法输入（非整数 / ≤0 / 超过上限）→ 提示后退出，不产生任何远端写入；
-- 取队列中状态为 `pending` 的前 `n` 条（严格按队列顺序）；
+- 取 **`unread` List 中按 List 顺序的前 `n` 条**（队列只作状态镜像；`-OnlyId` 的条目必须存在于 unread List）；
 - 支持 `-OnlyId <owner/name>`、`-IdsFile <path>` 定向阅读、`-Force` 重读已完成项、`-DryRun` 只打印将要读的清单；
 - 每条抓取的材料：
   - 仓库元数据（描述、语言、star、license、最后提交时间、topics）；
@@ -428,7 +428,7 @@ GitHub Joy 把这件事做成一条流水线：
 | AC-2 | 幂等 | 同日扫描两次、扫描后立即再扫描，队列与 List 条目数不变 |
 | AC-3 | 覆盖度 | 三个榜单的并集全部处理，日志满足 `scanned = added + 各跳过原因之和` |
 | AC-4 | 输入校验 | `0` / `abc` / `21` 被拒绝，无任何远端写入 |
-| AC-5 | 阅读顺序 | `run-joy.bat 3` 处理队列前 3 条，顺序与队列一致 |
+| AC-5 | 阅读顺序 | `run-joy.bat 3` 处理 unread List 前 3 个（List 顺序），与页面「待读」一致 |
 | AC-6 | 总结质量 | 每条含全部固定字段；提到的文件均存在于 `sources`；无 README 时注明推断依据 |
 | AC-7 | 页面可用 | 断网可打开、深色/打印/移动端正常、无乱码、无残留 Markdown 标记、注入文本被转义 |
 | AC-8 | 状态迁移 | 发布成功后 unread 减少数 = read 增加数 = 本次发布成功数；`-NoPublish` / `-NoMark` 时收藏夹不变 |

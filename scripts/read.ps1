@@ -44,6 +44,7 @@ $script:Result = [ordered]@{
   dryRun = [bool]$DryRun; noWrite = [bool]$NoWrite; noLlm = [bool]$NoLlm
   mode = $(if ($Lite) { 'lite' } else { 'deep' })
   selected = 0; succeeded = 0; failed = 0; skipped = 0
+  created = 0; selectionSource = 'queue'; unreadTotal = 0
   items = @()
   llm = [ordered]@{ model = $null; calls = 0 }
   error = $null; hint = $null
@@ -70,7 +71,7 @@ function Fail-JoyRead([int]$Code, [string]$Message, [string]$Hint = '') {
 }
 
 function Save-Queue($Queue) {
-  if ($NoWrite) { return }
+  if ($NoWrite -or $DryRun) { return }
   $Queue.updatedAt = (New-IsoNow)
   Write-JoyJsonFile (Get-QueuePath) $Queue
 }
@@ -107,12 +108,12 @@ if (-not $NoLlm) {
   $script:Result.llm.model = $llm.Model
 }
 
-# ---------------------------------------------------------------- select
+# ---------------------------------------------------------------- select (unread List is the source of truth)
 $queue = Read-JoyJsonFile (Get-QueuePath)
 if (-not $queue -or -not ($queue.PSObject.Properties.Name -contains 'items')) {
-  Fail-JoyRead 1 'queue.json missing' 'Run scan first'
+  $queue = [pscustomobject][ordered]@{ version = 1; updatedAt = (New-IsoNow); seq = 0; items = @() }
 }
-$all = @($queue.items | Sort-Object seq)
+$queue.items = @($queue.items)
 
 # reset items left in summarizing by a cancelled/interrupted run
 $stale = @($queue.items | Where-Object { [string]$_.status -eq 'summarizing' })
@@ -121,29 +122,109 @@ if ($stale.Count -gt 0) {
   Save-Queue $queue
   Write-JoyLog ("reset {0} interrupted item(s) to pending" -f $stale.Count) 'WARN'
 }
-$wanted = @()
-if ($OnlyId) {
-  $wanted = @($all | Where-Object {
-      ([string]$_.id).ToLowerInvariant() -eq $OnlyId.ToLowerInvariant() -or
-      ([string]$_.fullName).ToLowerInvariant() -eq $OnlyId.ToLowerInvariant()
-    })
-} elseif ($IdsFile) {
+
+$listsRes = Get-JoyLists -Token $token -Proxy $proxy
+if (-not $listsRes.ok) { Fail-JoyRead 2 ('cannot read Lists: ' + [string]$listsRes.error) 'Check the user scope (RUNBOOK 6.5)' }
+$names = Get-JoyListNames
+$unread = $listsRes.lists | Where-Object { ([string]$_.name).ToLowerInvariant() -eq ([string]$names.unread).ToLowerInvariant() } | Select-Object -First 1
+if (-not $unread) { Fail-JoyRead 2 'unread List not found' 'Run scan first' }
+
+$listRes = Get-JoyListItemsDetailed -Token $token -ListId ([string]$unread.id) -Proxy $proxy -Max 300
+if (-not $listRes.ok) { Fail-JoyRead 2 ('cannot read unread items: ' + [string]$listRes.error) }
+$listItems = @($listRes.items)
+$script:Result.unreadTotal = $listItems.Count
+$script:Result.selectionSource = 'unread-list'
+Write-JoyLog ("unread List has {0} item(s)" -f $listItems.Count)
+
+$queueIndex = @{}
+foreach ($q in $queue.items) { if ($q.id) { $queueIndex[([string]$q.id).ToLowerInvariant()] = $q } }
+
+$ids = @()
+if ($OnlyId) { $ids += $OnlyId.Trim().ToLowerInvariant() }
+if ($IdsFile) {
   if (-not (Test-Path -LiteralPath $IdsFile)) { Fail-JoyRead 2 ("ids file not found: " + $IdsFile) }
-  $ids = @([IO.File]::ReadAllLines($IdsFile, [Text.Encoding]::UTF8) |
+  $ids += @([IO.File]::ReadAllLines($IdsFile, [Text.Encoding]::UTF8) |
       ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ })
-  $wanted = @($all | Where-Object {
-      $ids -contains ([string]$_.id).ToLowerInvariant() -or $ids -contains ([string]$_.fullName).ToLowerInvariant()
-    })
-} else {
-  $wantN = $N
-  if ($wantN -le 0) { $wantN = $defaultN }
-  if ($wantN -gt $maxN) { $wantN = $maxN }
-  if ($Force) {
-    $wanted = @($all | Where-Object { [string]$_.status -notin @('moved', 'gone') } | Select-Object -First $wantN)
-  } else {
-    $wanted = @($all | Where-Object { [string]$_.status -eq 'pending' } | Select-Object -First $wantN)
-  }
 }
+
+$wantN = $N
+if ($wantN -le 0) { $wantN = $defaultN }
+if ($wantN -gt $maxN) { $wantN = $maxN }
+
+$selected = @()
+$seq = [int]$queue.seq
+$created = 0
+
+foreach ($li in $listItems) {
+  $key = ([string]$li.fullName).ToLowerInvariant()
+  if ($ids.Count -gt 0) {
+    if (-not ($ids -contains $key)) { continue }
+  } elseif ($selected.Count -ge $wantN) {
+    break
+  }
+
+  $existing = $null
+  if ($queueIndex.ContainsKey($key)) { $existing = $queueIndex[$key] }
+
+  if ($existing) {
+    if ([string]$existing.status -in @('moved', 'gone')) { continue }
+    if (-not $Force -and [string]$existing.status -eq 'done' -and $existing.summaryPath -and (Test-Path -LiteralPath ([string]$existing.summaryPath))) {
+      $script:Result.skipped++
+      Write-JoyLog ("skip existing summary: {0}" -f $li.fullName)
+      continue
+    }
+  }
+
+  if (-not $existing) {
+    $seq++
+    $existing = [pscustomobject][ordered]@{
+      id = $key
+      fullName = [string]$li.fullName
+      seq = $seq
+      status = 'pending'
+      addedAt = (New-IsoNow)
+      scannedFrom = @()
+      repo = [pscustomobject]@{
+        nodeId = [string]$li.id; description = [string]$li.description
+        language = [string]$li.language; stars = [int]$li.stars; forks = 0
+        topics = @(); archived = [bool]$li.archived; pushedAt = [string]$li.pushedAt
+      }
+      list = [pscustomobject]@{ inUnread = $true; inRead = $false; otherListIds = @() }
+      starred = $true
+      starSkipped = $null
+      attempts = 0
+      lastError = $null
+      summaryPath = $null
+      published = $false
+      publishedUrl = $null
+      movedAt = $null
+    }
+    $queue.items = @($queue.items) + $existing
+    $queueIndex[$key] = $existing
+    $created++
+  } else {
+    if ($existing.repo) {
+      if (-not $existing.repo.nodeId) { $existing.repo.nodeId = [string]$li.id }
+      $existing.repo.stars = [int]$li.stars
+      if (-not $existing.repo.description) { $existing.repo.description = [string]$li.description }
+      if (-not $existing.repo.language) { $existing.repo.language = [string]$li.language }
+    }
+    if ($existing.list) { $existing.list.inUnread = $true }
+  }
+  $selected += $existing
+}
+
+$queue.seq = $seq
+if ($created -gt 0) {
+  Write-JoyLog ("mirrored {0} unread item(s) into queue" -f $created)
+  Save-Queue $queue
+}
+$script:Result.created = $created
+
+if ($ids.Count -gt 0 -and $selected.Count -eq 0) {
+  Fail-JoyRead 2 'none of the requested ids are in the unread List' 'Check the id or the List name in gh.json'
+}
+$wanted = @($selected)
 
 if ($wanted.Count -eq 0) {
   Write-JoyLog 'no items selected' 'WARN'
@@ -358,7 +439,7 @@ foreach ($item in $wanted) {
   }
 
   try {
-    if (-not $NoWrite) {
+    if (-not $NoWrite -and -not $NoLlm) {
       $item.status = 'summarizing'
       $item.attempts = [int]$item.attempts + 1
       Save-Queue $queue
