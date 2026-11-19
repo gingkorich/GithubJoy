@@ -8,7 +8,7 @@ GitHub Trending 每日简报：扫描 today / week / month 榜单 → 未收藏�
 
 ## 当前状态
 
-- 阶段：**M1–M4b 完成并已上线**：`https://gingkorich.github.io/GithubJoy/`（unread 56 / read 4，23 个待读）。
+- 阶段：**M1–M4c 完成并已上线**：`https://gingkorich.github.io/GithubJoy/`（unread 56 / read 4，23 个待读）；控制台可扫描/阅读/生成页面/发布/迁移。
 - 已有：`MEMORY.md`、`docs/*`；代码：`joy.bat`、`scan.bat`、`service/*`（扫描按钮 + 进度 + 概览）、`scripts/scan.ps1`、`scripts/lib/*`、`config.sample.json`。
 - 未创建：`read.ps1`、`render.ps1`、`publish.ps1`、`migrate.ps1`；控制台尚未接扫描按钮。
 

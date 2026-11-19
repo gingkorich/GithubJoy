@@ -4,7 +4,7 @@
 
 ## 状态
 
-**M1–M4b 完成并已上线：<https://gingkorich.github.io/GithubJoy/>。** 文档：[`REQUIREMENTS.md`](docs/REQUIREMENTS.md)、[`DESIGN.md`](docs/DESIGN.md)、[`RUNBOOK.md`](docs/RUNBOOK.md)。当前状态：unread 56 / read 4，队列 23 待读；页面与命令行均可扫描、阅读、渲染、发布、迁移。
+**M1–M4c 完成并已上线：<https://gingkorich.github.io/GithubJoy/>。** 文档：[`REQUIREMENTS.md`](docs/REQUIREMENTS.md)、[`DESIGN.md`](docs/DESIGN.md)、[`RUNBOOK.md`](docs/RUNBOOK.md)。当前状态：unread 56 / read 4，队列 23 待读；控制台可扫描、阅读、生成页面、发布、迁移。
 
 ## 讨论结论速览
 

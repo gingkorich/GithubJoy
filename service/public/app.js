@@ -89,6 +89,9 @@ function renderStatus(s) {
   $('btnLogin').disabled = !!g.auth;
   $('btnLogout').disabled = !g.auth;
   $('btnScan').disabled = !!(s.job && s.job.state === 'running');
+  $('btnRender').disabled = !!(s.job && s.job.state === 'running');
+  $('btnPublish').disabled = !!(s.job && s.job.state === 'running');
+  $('btnMigrate').disabled = !!(s.job && s.job.state === 'running');
 
   if (s.job) renderJob(s.job);
 }
@@ -98,8 +101,13 @@ function renderJob(j) {
   $('jobCard').hidden = false;
   $('jobState').textContent = j.state;
   $('jobState').className = 'tag ' + j.state;
-  $('jobKind').textContent = j.kind === 'scan' ? (j.dryRun ? '扫描·干跑' : '扫描')
-    : (j.kind === 'read' ? '阅读' : 'gh 登录');
+  $('jobKind').textContent = {
+    scan: j.dryRun ? '扫描·干跑' : '扫描',
+    read: '阅读',
+    render: '渲染',
+    publish: '发布',
+    migrate: '迁移',
+  }[j.kind] || 'gh 登录';
   $('codeLine').hidden = !(j.kind === 'gh-login' && j.code);
   setText('jobCode', j.code);
 
@@ -120,6 +128,20 @@ function renderJob(j) {
     progress = '阅读' + (r.noWrite ? '（不写盘）' : '') + '：成功 ' + r.succeeded +
       '，失败 ' + r.failed + '，跳过 ' + r.skipped + '，Q&A 共 ' + qaTotal + ' 组';
   }
+  if (j.result && j.kind === 'render') {
+    const r = j.result;
+    const name = String(r.file || '').split(/[\\/]/).pop();
+    progress = '页面：' + r.count + ' 个，Q&A ' + r.qaTotal + ' 组' + (name ? '（' + name + '）' : '');
+  }
+  if (j.result && j.kind === 'publish') {
+    const r = j.result;
+    progress = '发布：' + (r.pushed ? '已推送' : (r.noPush ? '仅本地提交' : '未推送')) +
+      '，文件 ' + (r.copied || []).length + '，提交 ' + (r.commit || '无');
+  }
+  if (j.result && j.kind === 'migrate') {
+    const r = j.result;
+    progress = '迁移' + (r.dryRun ? '（干跑）' : '') + '：成功 ' + r.moved + '，失败 ' + r.failed;
+  }
   setText('jobProgress', progress);
 
   const hint = $('jobHint');
@@ -130,6 +152,9 @@ function renderJob(j) {
   $('btnLogin').disabled = j.state === 'running' || $('btnLogin').disabled;
   $('btnScan').disabled = j.state === 'running';
   $('btnRead').disabled = j.state === 'running';
+  $('btnRender').disabled = j.state === 'running';
+  $('btnPublish').disabled = j.state === 'running';
+  $('btnMigrate').disabled = j.state === 'running';
 
   if (j.state === 'running') {
     if (!pollTimer) pollTimer = setInterval(refresh, 1000);
@@ -198,6 +223,41 @@ $('btnRead').addEventListener('click', async () => {
     alert('发起阅读失败：' + e.message);
     $('btnRead').disabled = false;
   }
+});
+
+async function startOutputJob(kind, path, body) {
+  $('btnRender').disabled = $('btnPublish').disabled = $('btnMigrate').disabled = true;
+  try {
+    const r = await api(path, { method: 'POST', body: JSON.stringify(body || {}) });
+    activeJob = { id: r.jobId, kind, state: 'running', lines: [], progress: { phase: 'start', done: 0, total: 0 } };
+    renderJob(activeJob);
+    pollTimer = setInterval(refresh, 1000);
+  } catch (e) {
+    $('btnRender').disabled = $('btnPublish').disabled = $('btnMigrate').disabled = false;
+    throw e;
+  }
+}
+
+$('btnRender').addEventListener('click', async () => {
+  const n = Number($('renderN').value || 3);
+  if (!Number.isInteger(n) || n < 1 || n > 20) {
+    alert('数量必须是 1–20 的整数');
+    return;
+  }
+  try { await startOutputJob('render', '/api/render', { n: n }); }
+  catch (e) { alert('生成页面失败：' + e.message); }
+});
+
+$('btnPublish').addEventListener('click', async () => {
+  if (!confirm('把 docs/ 下的页面推送到 GitHub Pages？')) return;
+  try { await startOutputJob('publish', '/api/publish', {}); }
+  catch (e) { alert('发布失败：' + e.message); }
+});
+
+$('btnMigrate').addEventListener('click', async () => {
+  if (!confirm('把已发布的项目从 unread 移到 read？')) return;
+  try { await startOutputJob('migrate', '/api/migrate', {}); }
+  catch (e) { alert('迁移失败：' + e.message); }
 });
 
 $('btnLogout').addEventListener('click', async () => {

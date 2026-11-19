@@ -210,6 +210,11 @@ M2 扫描（2026-11-19，DryRun 通过）：
 - 真实 migrate 迁移 4 条（chronytop + n3 三条），unread 60→56、read 0→4，快照 `data/state/lists-migrate-20261119-182132.json`；
 - Pages 已构建：`https://gingkorich.github.io/GithubJoy/` 200，`2026-11-19-n3.html` 15301 字节（含 cursor/plugins 与 overview/Q&A）。
 
+M4c 控制台产出按钮（2026-11-19）：
+- 新增 `POST /api/render`、`/api/publish`、`/api/migrate`，复用通用 `startScriptJob`（单任务槽、进度/日志/取消、结果文件）；
+- 页面新增「产出」卡：最近 N 条 + 生成页面、发布到 Pages、迁移到 read；发布/迁移前二次确认；
+- 任务卡新增三种类型的标签与结果摘要（页面 N 个/Q&A；发布已推送/文件数/提交；迁移成功/失败）；
+- 实测：publish DryRun = nothing to publish；migrate DryRun = nothing to migrate；render 传不存在 id 时正确失败并显示原因。
 M4b 发布与迁移（2026-11-19）：
 - 新增 `scripts/publish.ps1`：`reports/` → `docs/`（含 `.nojekyll`），`git add` 只列页面文件，`fetch` 检查落后，commit + push；`-DryRun` 只打印，`-NoPush` 本地提交不推送；推送成功后把 `reports-index` 与队列条目标 `published/url`（依赖 render 写入的 `ids`）。
 - 新增 `scripts/migrate.ps1`：只处理 `done + published + inUnread` 的条目，先写 `data/state/lists-<runId>.json` 快照，再 `updateUserListsForItem`（其它 List + read），置 `moved`；支持 `-Rollback <runId>` 与 `-DryRun`。

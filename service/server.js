@@ -617,6 +617,58 @@ async function startRead(opts) {
   return { jobId: id };
 }
 
+async function startScriptJob(kind, scriptName, scriptArgs, timeoutMs, options) {
+  if (job && job.state === 'running') return { busy: true, jobId: job.id };
+
+  const now = new Date();
+  const id = kind + '-' + stamp(now);
+  job = {
+    id, kind, state: 'running',
+    startedAt: now.toISOString(), endedAt: null,
+    exitCode: null, error: null, progress: { phase: 'start', done: 0, total: 0 },
+    result: null, lines: [], options: options || {},
+  };
+  persistJob();
+
+  const resultFile = path.join(JOBS, id + '.result.json');
+  const argv = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(ROOT, 'scripts', scriptName),
+    '-JsonOut', resultFile, '-LogFile', path.join(ROOT, 'logs', kind + '-' + stamp(now) + '.log')]
+    .concat(scriptArgs || []);
+
+  const child = spawn('powershell.exe', argv, {
+    stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: childEnv(),
+  });
+  job.pid = child.pid;
+  child.stdout.on('data', pushLine);
+  child.stderr.on('data', pushLine);
+
+  const timer = setTimeout(() => {
+    if (job && job.state === 'running') {
+      job.error = 'timeout_' + Math.round(timeoutMs / 1000) + 's';
+      try { execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], () => {}); } catch (_) {}
+    }
+  }, timeoutMs);
+
+  child.on('close', (code) => {
+    clearTimeout(timer);
+    if (!job || job.state !== 'running') return;
+    job.endedAt = new Date().toISOString();
+    job.exitCode = code;
+    const res = readJsonFile(resultFile, null);
+    if (res) {
+      job.result = res;
+      if (res.error) job.error = String(res.error);
+      if (res.hint) job.hintText = String(res.hint);
+    }
+    if (code !== 0 && !job.error) job.error = 'exit_' + code;
+    job.state = (code === 0 && !(res && res.ok === false)) ? 'succeeded' : 'failed';
+    statusCache.value = null;
+    persistJob();
+  });
+
+  return { jobId: id };
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -774,6 +826,48 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/llm/test' && req.method === 'POST') {
       return sendJson(res, 200, await testLlm());
+    }
+
+    if (p === '/api/render' && req.method === 'POST') {
+      let body = {};
+      try {
+        const raw = await readBody(req);
+        body = raw && raw.trim() ? JSON.parse(raw) : {};
+      } catch (_) { /* empty body */ }
+      const args = [];
+      const n = Number(body.n);
+      if (Number.isFinite(n) && n > 0) args.push('-N', String(Math.min(20, Math.round(n))));
+      if (body.onlyId) args.push('-OnlyId', String(body.onlyId));
+      const r = await startScriptJob('render', 'render.ps1', args, 10 * 60 * 1000, body);
+      if (r.busy) return sendJson(res, 409, { error: 'busy', jobId: r.jobId });
+      return sendJson(res, 202, { jobId: r.jobId });
+    }
+
+    if (p === '/api/publish' && req.method === 'POST') {
+      let body = {};
+      try {
+        const raw = await readBody(req);
+        body = raw && raw.trim() ? JSON.parse(raw) : {};
+      } catch (_) { /* empty body */ }
+      const args = [];
+      if (body.dryRun) args.push('-DryRun');
+      if (body.noPush) args.push('-NoPush');
+      const r = await startScriptJob('publish', 'publish.ps1', args, 10 * 60 * 1000, body);
+      if (r.busy) return sendJson(res, 409, { error: 'busy', jobId: r.jobId });
+      return sendJson(res, 202, { jobId: r.jobId });
+    }
+
+    if (p === '/api/migrate' && req.method === 'POST') {
+      let body = {};
+      try {
+        const raw = await readBody(req);
+        body = raw && raw.trim() ? JSON.parse(raw) : {};
+      } catch (_) { /* empty body */ }
+      const args = [];
+      if (body.dryRun) args.push('-DryRun');
+      const r = await startScriptJob('migrate', 'migrate.ps1', args, 10 * 60 * 1000, body);
+      if (r.busy) return sendJson(res, 409, { error: 'busy', jobId: r.jobId });
+      return sendJson(res, 202, { jobId: r.jobId });
     }
 
     if (p === '/api/scan' && req.method === 'POST') {

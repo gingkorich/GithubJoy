@@ -529,6 +529,9 @@ server.listen(port, '127.0.0.1', () => {
 | GET | `/api/status` | — | 见下方示例 |
 | POST | `/api/scan` | `{}` | `202 { "jobId": "scan-…" }`；已有任务 → `409 {error:"busy"}` |
 | POST | `/api/read` | `{"n":5,"lite":false,"noWrite":false,"dryRun":false}` | `202 {jobId}`；`n` 不在 1–20 → `400` |
+| POST | `/api/render` | `{"n":3}` 或 `{"onlyId":"owner/name"}` | `202 {jobId}` |
+| POST | `/api/publish` | `{"dryRun":false,"noPush":false}` | `202 {jobId}` |
+| POST | `/api/migrate` | `{"dryRun":false}` | `202 {jobId}` |
 | POST | `/api/read` | `{"n":5,"noPublish":false}` | `202 {jobId}`；`n` 越界 → `400` |
 | GET | `/api/jobs/<id>` | `?tail=200` | `{ job, lines:[…] }` |
 | POST | `/api/jobs/<id>/cancel` | — | `200 {state:"cancelled"}` |
@@ -615,6 +618,7 @@ spawn('powershell.exe', ['-NoProfile','-ExecutionPolicy','Bypass','-File','scrip
 ├─ 扫描卡：上次扫描 | 本次新增 | 累计 unread + [立即扫描] ──────┤
 ├─ 阅读卡：上次阅读 | 待读 + [阅读 n] [Lite] ────────────────────┤
 ├─ 任务卡（运行中出现）：阶段/进度 | 日志 | [取消] ─────────────┤
+├─ 产出卡： [最近 n 条] [生成页面] [发布到 Pages] [迁移到 read] ─┤
 ├─ 账号区： [使用 GitHub 登录] / 用户名 + [退出登录][探测 Lists] ┤
 └─ 模型区： 接口 | 模型 | API Key(密码) | 超时 | [保存][测试连接] ┤
 ```
