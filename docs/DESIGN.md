@@ -393,6 +393,8 @@ listsCreated / listAddFailed
 
 ### 5.1 一轮 read 的顺序
 
+> 页面上点一次「阅读」即自动串行执行下面的 1–5；任一阶段失败即停止，并在任务卡显示原因。
+
 ```
 1. 选条目：从 **unread List** 按 List 顺序取前 n（或 -OnlyId / -IdsFile，必须在 List 中）→ 写入**本轮临时队列**（n 条）→ 置 summarizing；读完清空队列
 2. 逐条：抓材料 → LLM → 校验 → 写 summaries/<id>.json（断点）→ 置 done
@@ -622,7 +624,6 @@ spawn('powershell.exe', ['-NoProfile','-ExecutionPolicy','Bypass','-File','scrip
 ├─ 扫描卡：上次扫描 | 本次新增 | 累计 unread + [立即扫描] ──────┤
 ├─ 阅读卡：上次阅读 | 待读 + [阅读 n] [Lite] ────────────────────┤
 ├─ 任务卡（运行中出现）：阶段/进度 | 日志 | [取消] ─────────────┤
-├─ 产出卡： [最近 n 条] [生成页面] [发布到 Pages] [迁移到 read] ─┤
 ├─ 账号区： [使用 GitHub 登录] / 用户名 + [退出登录][探测 Lists] ┤
 └─ 模型区： 接口 | 模型 | API Key(密码) | 超时 | [保存][测试连接] ┤
 ```

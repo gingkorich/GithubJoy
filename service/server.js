@@ -383,7 +383,62 @@ async function ghListsProbe() {
 /* ------------------------------------------------------------------ */
 
 const CODE_RE = /[A-Z0-9]{4}-[A-Z0-9]{4}/;
-let job = null; // single auth job at a time
+let job = null; // single job at a time
+let pipeline = null; // {active, stage, jobId} for read -> render -> publish -> migrate
+
+function pipelineView() {
+  if (!pipeline) return null;
+  return { active: !!pipeline.active, stage: pipeline.stage, jobId: pipeline.jobId };
+}
+
+async function advancePipeline(finished, res) {
+  if (!pipeline || !pipeline.active || pipeline.jobId !== finished.id) return;
+
+  if (finished.kind === 'read') {
+    const ids = (res && res.items ? res.items : [])
+      .filter((x) => x && x.status === 'done' && x.id)
+      .map((x) => String(x.id));
+    if (!ids.length) {
+      pipeline.active = false;
+      console.log('[joy] pipeline: read produced no summaries, stop');
+      return;
+    }
+    const idsFile = path.join(JOBS, 'ids-' + stamp(new Date()) + '.txt');
+    fs.writeFileSync(idsFile, ids.join('\n'), 'utf8');
+    const r = await startScriptJob('render', 'render.ps1', ['-IdsFile', idsFile], 10 * 60 * 1000, { pipeline: true });
+    if (r.busy) { pipeline.active = false; return; }
+    pipeline.stage = 'render';
+    pipeline.jobId = r.jobId;
+    return;
+  }
+
+  if (finished.state !== 'succeeded') {
+    pipeline.active = false;
+    console.log('[joy] pipeline: ' + finished.kind + ' failed, stop');
+    return;
+  }
+
+  if (finished.kind === 'render') {
+    const r = await startScriptJob('publish', 'publish.ps1', [], 10 * 60 * 1000, { pipeline: true });
+    if (r.busy) { pipeline.active = false; return; }
+    pipeline.stage = 'publish';
+    pipeline.jobId = r.jobId;
+    return;
+  }
+
+  if (finished.kind === 'publish') {
+    const r = await startScriptJob('migrate', 'migrate.ps1', [], 10 * 60 * 1000, { pipeline: true });
+    if (r.busy) { pipeline.active = false; return; }
+    pipeline.stage = 'migrate';
+    pipeline.jobId = r.jobId;
+    return;
+  }
+
+  if (finished.kind === 'migrate') {
+    pipeline.active = false;
+    console.log('[joy] pipeline: complete');
+  }
+}
 
 function jobView(j, tail) {
   if (!j) return null;
@@ -612,6 +667,10 @@ async function startRead(opts) {
     job.state = (code === 0 && !(res && res.ok === false)) ? 'succeeded' : 'failed';
     statusCache.value = null;
     persistJob();
+    advancePipeline(job, res).catch((e) => {
+      console.log('[joy] pipeline error: ' + (e && e.message ? e.message : e));
+      if (pipeline) pipeline.active = false;
+    });
   });
 
   return { jobId: id };
@@ -664,6 +723,10 @@ async function startScriptJob(kind, scriptName, scriptArgs, timeoutMs, options) 
     job.state = (code === 0 && !(res && res.ok === false)) ? 'succeeded' : 'failed';
     statusCache.value = null;
     persistJob();
+    advancePipeline(job, res).catch((e) => {
+      console.log('[joy] pipeline error: ' + (e && e.message ? e.message : e));
+      if (pipeline) pipeline.active = false;
+    });
   });
 
   return { jobId: id };
@@ -778,6 +841,7 @@ const server = http.createServer(async (req, res) => {
         })(),
         ...dashboard(),
         llm: llmView(),
+        pipeline: pipelineView(),
         job: jobView(job, 50),
       });
     }
@@ -801,7 +865,8 @@ const server = http.createServer(async (req, res) => {
       const r = await startRead(body);
       if (r.error === 'bad_n') return sendJson(res, 400, { error: 'n must be 1-20' });
       if (r.busy) return sendJson(res, 409, { error: 'busy', jobId: r.jobId });
-      return sendJson(res, 202, { jobId: r.jobId });
+      pipeline = { active: true, stage: 'read', jobId: r.jobId };
+      return sendJson(res, 202, { jobId: r.jobId, pipeline: pipelineView() });
     }
 
     if (p === '/api/llm' && req.method === 'GET') {
@@ -878,6 +943,7 @@ const server = http.createServer(async (req, res) => {
       } catch (_) { /* empty body is fine */ }
       const r = await startScan(!!body.dryRun);
       if (r.busy) return sendJson(res, 409, { error: 'busy', jobId: r.jobId });
+      pipeline = null;
       return sendJson(res, 202, { jobId: r.jobId });
     }
 

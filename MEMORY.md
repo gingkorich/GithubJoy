@@ -210,7 +210,11 @@ M2 扫描（2026-11-19，DryRun 通过）：
 - 真实 migrate 迁移 4 条（chronytop + n3 三条），unread 60→56、read 0→4，快照 `data/state/lists-migrate-20261119-182132.json`；
 - Pages 已构建：`https://gingkorich.github.io/GithubJoy/` 200，`2026-11-19-n3.html` 15301 字节（含 cursor/plugins 与 overview/Q&A）。
 
-M4c 控制台产出按钮（2026-11-19）：
+阅读后自动流水线（2026-11-19）：
+- 页面点一次「阅读」后，服务端自动串联 read → render → publish → migrate；`/api/status` 返回 `pipeline {active,stage,jobId}`，任务卡按阶段显示；
+- 移除页面「产出」模块；`/api/render`、`/api/publish`、`/api/migrate` 仍保留（命令行/调试用）；
+- 修复：`migrate.ps1` 缺少 `Get-StatePath`，迁移成功后更新 state 抛错（已补函数）；另手工把 state 从 56 修正到 55；
+- 实测：n=1（Lite）全链路成功，unread 55→54、read 5→6，新报告 `2026-11-19-n1-185020.html` 已在 Pages 返回 200。
 - 新增 `POST /api/render`、`/api/publish`、`/api/migrate`，复用通用 `startScriptJob`（单任务槽、进度/日志/取消、结果文件）；
 - 页面新增「产出」卡：最近 N 条 + 生成页面、发布到 Pages、迁移到 read；发布/迁移前二次确认；
 - 任务卡新增三种类型的标签与结果摘要（页面 N 个/Q&A；发布已推送/文件数/提交；迁移成功/失败）；

@@ -173,6 +173,7 @@ scanned = added + already_unread + already_read + already_done + denied
 在页面输入 `5` → **阅读 5 个**（与 `run-joy.bat 5` 等价）。
 
 - 阅读源是 **GitHub `unread` List**（按 List 顺序），选中后写入本地临时队列；**阅读结束（成功或失败）队列清空**；
+- 点一次「阅读」后自动完成「渲染 → 发布 → 迁移」，不需要再点其他按钮；任一阶段失败会停在当前阶段并显示原因；
 - 扫描不写本地队列；页面「待读」显示 unread List 总数；
 - 已有 summary 的条目会自动跳过（`-Force` 重做）。
 
@@ -857,5 +858,5 @@ git pull --ff-only
 | `read.ps1` n=3 deep（故障与修复） | ✅ 已回填（2026-11-19）：3 条 summary 生成成功但队列标记抛 `readRunId` 属性不存在；修复后 3 条恢复 done，`render -N 3` 生成 3 卡片 / 15 问答 |
 | 真实发布（仓库 + Pages） | ✅ 已回填（2026-11-19）：创建 public 仓库、`master` / `docs` Pages；publish 推送后标记 2 份报告 / 4 条 published；`https://gingkorich.github.io/GithubJoy/` 返回 200 |
 | 真实迁移 | ✅ 已回填（2026-11-19）：迁移 4 条（chronytop + n3 三条），unread 60→56、read 0→4，快照 `lists-migrate-20261119-182132.json` |
-| 控制台产出按钮 | ✅ 已回填（2026-11-19）：`/api/render` 失败路径、`/api/publish -DryRun`、`/api/migrate -DryRun` 均通过任务卡返回结果；按钮运行中禁用 |
+| 控制台自动流水线 | ✅ 已回填（2026-11-19）：点一次「阅读」（n=1, Lite）后自动完成 阅读→渲染→发布→迁移；unread 55→54、read 5→6，Pages 新页面 200 |
 | AC-1～AC-14 实测结果 | M2–M5 逐条 |

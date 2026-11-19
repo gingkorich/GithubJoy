@@ -86,12 +86,11 @@ function renderStatus(s) {
     who.classList.remove('on');
   }
 
-  $('btnLogin').disabled = !!g.auth;
+  const active = !!(s.job && s.job.state === 'running') || !!(s.pipeline && s.pipeline.active);
+  $('btnLogin').disabled = !!g.auth || active;
   $('btnLogout').disabled = !g.auth;
-  $('btnScan').disabled = !!(s.job && s.job.state === 'running');
-  $('btnRender').disabled = !!(s.job && s.job.state === 'running');
-  $('btnPublish').disabled = !!(s.job && s.job.state === 'running');
-  $('btnMigrate').disabled = !!(s.job && s.job.state === 'running');
+  $('btnScan').disabled = active;
+  $('btnRead').disabled = active;
 
   if (s.job) renderJob(s.job);
 }
@@ -152,25 +151,19 @@ function renderJob(j) {
   $('btnLogin').disabled = j.state === 'running' || $('btnLogin').disabled;
   $('btnScan').disabled = j.state === 'running';
   $('btnRead').disabled = j.state === 'running';
-  $('btnRender').disabled = j.state === 'running';
-  $('btnPublish').disabled = j.state === 'running';
-  $('btnMigrate').disabled = j.state === 'running';
+}
 
-  if (j.state === 'running') {
-    if (!pollTimer) pollTimer = setInterval(refresh, 1000);
-  } else if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-    refresh();
-  }
+function ensurePoll() {
+  if (!pollTimer) pollTimer = setInterval(refresh, 1000);
 }
 
 async function refresh() {
   try {
     const s = await api('/api/status');
     renderStatus(s);
-    const running = s.job && s.job.state === 'running';
-    if (!running && pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    const active = (s.job && s.job.state === 'running') || (s.pipeline && s.pipeline.active);
+    if (active) ensurePoll();
+    else if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   } catch (e) {
     $('who').textContent = '服务异常：' + e.message;
     $('who').classList.remove('on');
@@ -183,7 +176,7 @@ $('btnLogin').addEventListener('click', async () => {
     const r = await api('/api/gh/login', { method: 'POST', body: '{}' });
     activeJob = { id: r.jobId, state: 'running', lines: [] };
     renderJob(activeJob);
-    pollTimer = setInterval(refresh, 1000);
+    ensurePoll();
   } catch (e) {
     alert('发起登录失败：' + e.message + (e.status === 403 ? '\n请从 http://127.0.0.1:8787/ 打开本页。' : ''));
     $('btnLogin').disabled = false;
@@ -196,7 +189,7 @@ $('btnScan').addEventListener('click', async () => {
     const r = await api('/api/scan', { method: 'POST', body: '{}' });
     activeJob = { id: r.jobId, kind: 'scan', state: 'running', dryRun: false, lines: [], progress: { phase: 'start', done: 0, total: 5 } };
     renderJob(activeJob);
-    pollTimer = setInterval(refresh, 1000);
+    ensurePoll();
   } catch (e) {
     alert('发起扫描失败：' + e.message);
     $('btnScan').disabled = false;
@@ -218,46 +211,11 @@ $('btnRead').addEventListener('click', async () => {
       progress: { phase: 'start', done: 0, total: n },
     };
     renderJob(activeJob);
-    pollTimer = setInterval(refresh, 1000);
+    ensurePoll();
   } catch (e) {
     alert('发起阅读失败：' + e.message);
     $('btnRead').disabled = false;
   }
-});
-
-async function startOutputJob(kind, path, body) {
-  $('btnRender').disabled = $('btnPublish').disabled = $('btnMigrate').disabled = true;
-  try {
-    const r = await api(path, { method: 'POST', body: JSON.stringify(body || {}) });
-    activeJob = { id: r.jobId, kind, state: 'running', lines: [], progress: { phase: 'start', done: 0, total: 0 } };
-    renderJob(activeJob);
-    pollTimer = setInterval(refresh, 1000);
-  } catch (e) {
-    $('btnRender').disabled = $('btnPublish').disabled = $('btnMigrate').disabled = false;
-    throw e;
-  }
-}
-
-$('btnRender').addEventListener('click', async () => {
-  const n = Number($('renderN').value || 3);
-  if (!Number.isInteger(n) || n < 1 || n > 20) {
-    alert('数量必须是 1–20 的整数');
-    return;
-  }
-  try { await startOutputJob('render', '/api/render', { n: n }); }
-  catch (e) { alert('生成页面失败：' + e.message); }
-});
-
-$('btnPublish').addEventListener('click', async () => {
-  if (!confirm('把 docs/ 下的页面推送到 GitHub Pages？')) return;
-  try { await startOutputJob('publish', '/api/publish', {}); }
-  catch (e) { alert('发布失败：' + e.message); }
-});
-
-$('btnMigrate').addEventListener('click', async () => {
-  if (!confirm('把已发布的项目从 unread 移到 read？')) return;
-  try { await startOutputJob('migrate', '/api/migrate', {}); }
-  catch (e) { alert('迁移失败：' + e.message); }
 });
 
 $('btnLogout').addEventListener('click', async () => {

@@ -41,6 +41,7 @@ $script:Result = [ordered]@{
 }
 
 function New-IsoNow { return (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }
+function Get-StatePath { Join-Path $dataDir 'state.json' }
 
 function Save-ResultAndExit([int]$Code) {
   $script:Result.durationMs = [int]((Get-Date) - $started).TotalMilliseconds
