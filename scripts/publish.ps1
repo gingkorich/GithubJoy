@@ -82,7 +82,7 @@ if (-not $pub) { Fail-JoyPublish 2 'gh.json.publish missing' 'Add publish {repo,
 
 $branch = 'main'
 if ($pub.PSObject.Properties.Name -contains 'branch' -and $pub.branch) { $branch = [string]$pub.branch }
-$dirName = 'docs'
+$dirName = 'reports'
 if ($pub.PSObject.Properties.Name -contains 'dir' -and $pub.dir) { $dirName = [string]$pub.dir }
 $baseUrl = ''
 if ($pub.PSObject.Properties.Name -contains 'baseUrl' -and $pub.baseUrl) { $baseUrl = ([string]$pub.baseUrl).TrimEnd('/') }
@@ -92,10 +92,6 @@ $script:Result.branch = $branch
 $script:Result.dir = $dirName
 $script:Result.baseUrl = $baseUrl
 
-if (-not (Test-Path -LiteralPath $docsDir)) {
-  if ($DryRun) { Write-JoyLog ("dryRun: would create " + $docsDir) }
-  else { New-Item -ItemType Directory -Force -Path $docsDir | Out-Null }
-}
 if (-not (Test-Path -LiteralPath $reportsDir)) { Fail-JoyPublish 1 'reports/ is empty; run render first' }
 
 # ---------------------------------------------------------------- entries
@@ -127,28 +123,28 @@ Write-JoyLog ("pending reports: {0}" -f ($files -join ', '))
 
 # ---------------------------------------------------------------- dry run
 if ($DryRun) {
-  foreach ($f in $files) { Write-JoyLog ("dryRun: would copy reports\{0} -> {1}\{0}" -f $f, $dirName) }
-  if (-not (Test-Path -LiteralPath (Join-Path $docsDir '.nojekyll'))) {
-    Write-JoyLog 'dryRun: would create .nojekyll'
+  foreach ($f in $files) { Write-JoyLog ("dryRun: would commit {0}/{1}" -f $dirName, $f) }
+  if (-not (Test-Path -LiteralPath (Join-Path $root '.nojekyll'))) {
+    Write-JoyLog 'dryRun: would create .nojekyll at repo root'
   }
   Write-JoyLog 'dryRun: would git add only these files, then commit and push'
   $script:Result.ok = $true
   Save-ResultAndExit 0
 }
 
-# ---------------------------------------------------------------- copy
+# ---------------------------------------------------------------- files
 foreach ($f in $files) {
-  $src = Join-Path $reportsDir $f
-  $dst = Join-Path $docsDir $f
-  Copy-Item -LiteralPath $src -Destination $dst -Force
+  if (-not (Test-Path -LiteralPath (Join-Path $reportsDir $f))) {
+    Fail-JoyPublish 1 ('report file missing: ' + $f) 'Run render again for this report'
+  }
   $script:Result.copied += $f
 }
-$nojekyll = Join-Path $docsDir '.nojekyll'
+$nojekyll = Join-Path $root '.nojekyll'
 if (-not (Test-Path -LiteralPath $nojekyll)) {
   [IO.File]::WriteAllText($nojekyll, '', (New-Object Text.UTF8Encoding($false)))
   $script:Result.copied += '.nojekyll'
 }
-Write-JoyLog ("copied {0} file(s) to {1}" -f $script:Result.copied.Count, $dirName)
+Write-JoyLog ("prepared {0} file(s) under {1}" -f $script:Result.copied.Count, $dirName)
 
 # ---------------------------------------------------------------- git
 $r = Invoke-Git @('rev-parse', '--is-inside-work-tree')
@@ -176,6 +172,7 @@ if ($hasRemote -and -not $NoPush) {
 
 $addArgs = @('add', '--')
 foreach ($f in $script:Result.copied) {
+  if ($f -eq '.nojekyll') { $addArgs += '.nojekyll'; continue }
   $rel = ($dirName + '/' + $f) -replace '\\', '/'
   $addArgs += $rel
 }
@@ -218,7 +215,7 @@ if ($script:Result.pushed) {
     if ($pendingNames.ContainsKey([string]$e.file)) {
       Set-JoyProp $e 'published' $true
       Set-JoyProp $e 'pushedAt' $now
-      if ($baseUrl) { Set-JoyProp $e 'url' ($baseUrl + '/' + [string]$e.file) }
+      if ($baseUrl) { Set-JoyProp $e 'url' ($baseUrl + '/' + $dirName + '/' + [string]$e.file) }
     }
   }
   Write-JoyJsonFile $idxPath $entries

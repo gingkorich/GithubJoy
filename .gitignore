@@ -5,11 +5,11 @@ llm.json
 
 # runtime data
 data/
-reports/
 cache/
 logs/
 .work/
 node_modules/
+reports/*.tmp
 
 # tooling
 *.log
