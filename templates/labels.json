@@ -1,0 +1,19 @@
+{
+  "qaTitle": "实现逻辑",
+  "refsPrefix": "来源：",
+  "metaStack": "技术栈",
+  "metaUse": "适用场景",
+  "metaRisk": "风险",
+  "metaFetch": "抓取",
+  "warnPrefix": "提示：",
+  "statsTpl": "项目 {count} · Q&A {qa} 组 · 模式 {modes} · 生成 {time}",
+  "fetchTpl": "mode={mode} · 文本来源 {sources} 个 · 目录树 {tree} 项",
+  "reportTitleTpl": "GitHub Joy · {date} 简报",
+  "reportSubtitleTpl": "本期 {count} 个项目 · {qa} 组实现问答",
+  "footerTpl": "GitHub Joy · RunId {runId} · 数据来源：GitHub Search/REST + 配置的模型 · 页面自包含，可离线打开",
+  "unpublished": "未发布",
+  "published": "已发布",
+  "indexTitle": "GitHub Joy · 简报归档",
+  "indexSubtitle": "历史简报（按生成时间倒序）",
+  "indexFooterTpl": "GitHub Joy · 共 {count} 份报告 · 页面自包含"
+}

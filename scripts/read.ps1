@@ -497,6 +497,7 @@ foreach ($item in $wanted) {
       tree = [ordered]@{ entries = $paths.Count; truncated = [bool]$tree.truncated }
       model = $llm.Model
       generatedAt = (New-IsoNow)
+      readRunId = $runId
       warnings = @($warnings)
     }
 
@@ -504,6 +505,7 @@ foreach ($item in $wanted) {
       Write-JoyJsonFile $summaryPath $summary
       $item.status = 'done'
       $item.summaryPath = $summaryPath
+      $item.readRunId = $runId
       $item.lastError = $null
       Save-Queue $queue
     }

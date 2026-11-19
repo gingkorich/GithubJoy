@@ -923,6 +923,7 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 | M3a 模型配置 | `/api/llm`（读写 + 测试）、页面「模型」区 | 保存后只显示掩码；测试连接返回状态与延迟 |
 | M2 扫描 | `scan.ps1`（search → 去重 → queue → Lists → star），先 `-DryRun` | 干跑输出统计且不写远端；再真实写入，AC-1/2/3/14 通过 |
 | M3 阅读 | `read.ps1` + prompts + `llm.ps1` 校验 | `-NoPublish` 跑 `n=3`，产出 3 份 summary；AC-6/13 通过 |
+| M4a 渲染 | `render.ps1`、`templates/*`、`templates/labels.json` | 本地 `reports/<date>-n<n>.html` + latest + index；注入样例全部转义 |
 | M4 渲染发布 | `render.ps1`、`publish.ps1`、`migrate.ps1` | `-NoPublish` 本地页面正确；真实发布后 Pages 可访问；AC-7/8/9 通过 |
 | M5 加固 | `self-test.ps1`、`-Repair`、`-Rollback`、README/RUNBOOK | 离线测试全绿；断网/中断演练可续跑；AC-4/5/10/11/12 通过 |
 

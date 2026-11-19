@@ -783,6 +783,9 @@ git pull --ff-only
 | 单条重试 | `.\run-joy.bat -OnlyId owner/name` |
 | 只抓材料（不调模型、不写盘） | `.\run-joy.bat -OnlyId owner/name -Lite -NoLlm -NoWrite` |
 | 调模型但不写盘 | `.\run-joy.bat -OnlyId owner/name -Lite -NoWrite` |
+| 渲染最近 5 条 | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render.ps1 -N 5` |
+| 渲染指定项目 | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render.ps1 -OnlyId owner/name` |
+| 预览报告 | 打开 `reports\latest.html` |
 | 批量补读 | `.\run-joy.bat -IdsFile ids.txt -NoPublish` |
 | 省钱模式 | `.\run-joy.bat 2 -Lite` |
 | 一致性修复 | `.\run-joy.bat -Repair -DryRun` |
@@ -837,4 +840,5 @@ git pull --ff-only
 | `read.ps1 -NoLlm -NoWrite` | ✅ 已回填（2026-11-19）：README 4339 字符、目录树 16 项、lite 不取关键文件 |
 | `read.ps1 -OnlyId ... -Lite`（真实） | ✅ 已回填（2026-11-19）：overview 126 字、Q&A 6 组、warnings 0；summary 落盘、队列置 done、state.lastRead 更新 |
 | 控制台「阅读」按钮（`/api/read`） | ✅ 已回填（2026-11-19）：DryRun n=2 通过；NoWrite n=1 真实调用成功（1 成功 / 0 失败 / 1 次 LLM）；n=0 返回 400 |
+| `render.ps1`（本地渲染） | ✅ 已回填（2026-11-19）：chronytop 生成 7823 字节报告（1 卡片 / 6 问答），latest 与 index 同步；XSS 样例全部转义 |
 | AC-1～AC-14 实测结果 | M2–M5 逐条 |

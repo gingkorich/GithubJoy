@@ -4,7 +4,7 @@
 
 ## 状态
 
-**需求 + 设计 + 手册 v1.2；M1/M2/M3 完成（含控制台扫描与阅读按钮），M4 渲染/发布未实现。** 文档：[`REQUIREMENTS.md`](docs/REQUIREMENTS.md)、[`DESIGN.md`](docs/DESIGN.md)、[`RUNBOOK.md`](docs/RUNBOOK.md)。当前可运行：双击 `joy.bat` 起本地服务（`http://127.0.0.1:8787/`），页面可扫描、阅读 n 个、看进度与统计、配置模型；命令行 `scan.bat` / `run-joy.bat` 等价可用。
+**需求 + 设计 + 手册 v1.2；M1/M2/M3 完成，M4a 本地渲染完成，发布/迁移未实现。** 文档：[`REQUIREMENTS.md`](docs/REQUIREMENTS.md)、[`DESIGN.md`](docs/DESIGN.md)、[`RUNBOOK.md`](docs/RUNBOOK.md)。当前可运行：`joy.bat` 控制台（扫描/阅读/模型配置）、`scan.bat`、`run-joy.bat`、`scripts\render.ps1`（生成 `reports\latest.html`）。
 
 ## 讨论结论速览
 
