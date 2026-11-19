@@ -184,7 +184,7 @@ $('btnRead').addEventListener('click', async () => {
     alert('数量必须是 1–20 的整数');
     return;
   }
-  const body = { n: n, lite: $('chkLite').checked, noWrite: $('chkNoWrite').checked };
+  const body = { n: n, lite: $('chkLite').checked };
   try {
     $('btnRead').disabled = true;
     const r = await api('/api/read', { method: 'POST', body: JSON.stringify(body) });
