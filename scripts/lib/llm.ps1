@@ -52,8 +52,23 @@ function Invoke-JoyLlmChat {
     if ($useTemp) { $payload['temperature'] = [double]$Config.Temperature }
     $body = $payload | ConvertTo-Json -Depth 12 -Compress
 
-    $r = Invoke-JoyHttp -Method 'POST' -Uri $url -Proxy $Proxy -TimeoutSec $Config.TimeoutSec `
-      -Headers @{ Authorization = "Bearer $($Config.ApiKey)" } -Body $body
+    # Direct first; only on a network-level failure (status 0: timeout/DNS/refused)
+    # fall back to the proxy once. HTTP-level errors (4xx/5xx) mean the service
+    # is reachable, so no proxy retry. The direct attempt uses the FULL timeout:
+    # aborting a slow-but-working direct call would resend the prompt and double
+    # the LLM bill.
+    $httpArgs = @{
+      Method = 'POST'
+      Uri    = $url
+      Headers = @{ Authorization = "Bearer $($Config.ApiKey)" }
+      Body   = $body
+      TimeoutSec = $Config.TimeoutSec
+    }
+    $r = Invoke-JoyHttp @httpArgs -Proxy $null
+    if (-not $r.ok -and [int]$r.status -eq 0 -and $Proxy) {
+      Write-JoyLog 'llm direct connection failed (network level); retrying via proxy' 'WARN'
+      $r = Invoke-JoyHttp @httpArgs -Proxy $Proxy
+    }
 
     $text = [string]$r.body
     if ($r.ok) {

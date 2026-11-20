@@ -44,7 +44,7 @@ $script:Result = [ordered]@{
   durationMs = 0
   dryRun = [bool]$DryRun; noWrite = [bool]$NoWrite; noLlm = [bool]$NoLlm
   mode = $(if ($Lite) { 'lite' } else { 'deep' })
-  selected = 0; succeeded = 0; failed = 0; skipped = 0
+  selected = 0; succeeded = 0; failed = 0; skipped = 0; gone = 0
   created = 0; selectionSource = 'queue'; unreadTotal = 0
   items = @()
   llm = [ordered]@{ model = $null; calls = 0 }
@@ -471,8 +471,19 @@ foreach ($item in $wanted) {
         Save-Queue $queue
         $entry.status = 'gone'; $entry.error = 'repo 404'
         $itemsOut += $entry
-        $script:Result.failed++
+        $script:Result.gone++
         Write-JoyLog ("repo gone: {0}" -f $full) 'WARN'
+        # auto-cleanup: unstar so GitHub drops the dead repo from Star Lists
+        # (Lists only keep starred repos); failure is logged and non-fatal.
+        if (-not $DryRun -and -not $NoWrite) {
+          $del = Invoke-JoyHttp -Method 'DELETE' -Uri ('https://api.github.com/user/starred/' + $full) `
+            -Headers (New-JoyApiHeaders $token) -Proxy $proxy
+          if ($del.ok -or $del.status -eq 404) {
+            Write-JoyLog ("gone cleanup: unstarred {0}; GitHub will drop it from Lists" -f $full) 'WARN'
+          } else {
+            Write-JoyLog ("gone cleanup failed for {0}: HTTP {1} {2}" -f $full, $del.status, [string]$del.error) 'WARN'
+          }
+        }
         continue
       }
       throw ('meta HTTP ' + $meta.status + ': ' + [string]$meta.error)
@@ -661,8 +672,8 @@ if (-not $NoWrite) {
 
 $script:Result.ok = ($script:Result.failed -eq 0)
 Write-JoyEvent @{ evt = 'progress'; phase = 'done'; done = $wanted.Count; total = $wanted.Count }
-Write-JoyLog ("summary: selected={0} succeeded={1} failed={2} skipped={3} llmCalls={4}" -f `
-  $wanted.Count, $script:Result.succeeded, $script:Result.failed, $script:Result.skipped, $script:Result.llm.calls)
+Write-JoyLog ("summary: selected={0} succeeded={1} failed={2} skipped={3} gone={4} llmCalls={5}" -f `
+  $wanted.Count, $script:Result.succeeded, $script:Result.failed, $script:Result.skipped, $script:Result.gone, $script:Result.llm.calls)
 
 $exitCode = 0
 if (-not $script:Result.ok) { $exitCode = 5 }

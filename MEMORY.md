@@ -198,6 +198,23 @@ M2 扫描（2026-11-19，DryRun 通过）：
 - 精确核对代码消费后移除全部死键：顶层 `version`、`network.noProxy`、`llm`（模型配置只认 `llm.json`，含 `temperature`，`auto` 模型拒收该参数）、`publish`、`retention`、`service` 节；保留 network/search/queue.denylist/star/read 全部活键；
 - 同步 DESIGN 附录 A、目录树、REQUIREMENTS FR-10 表、RUNBOOK 2.5/12.2、AGENTS「已有」列表。
 
+stats 字段撤销（2026-11-20）：
+- 用户决定：页面不需要「已总结/已报告/已发布」数字（stats 无 UI 消费即死数据）；
+- `server.js dashboard()` 删除 summaries/reports-index 派生逻辑，只返回 scan/read；DESIGN 6.2 示例与 D16 登记项同步（D16 标记撤销）。
+- 页面统计口径维持：unread/read 数来自 GitHub Lists 探针（`/api/status` 的 `unread`/`readCount`）。
+
+LLM 连通策略：直连优先 + 代理回退（2026-11-20）：
+- 需求：测试连接先直连、连不通再走代理（更稳妥），read 同样适用。
+- `server.js testLlm()`：先 `fetch` 直连（15s 超时；Node fetch 恰好忽略代理变量）；仅网络层失败时用新增 `httpViaProxy()`（标准库 `net`+`tls`，HTTP 代理 CONNECT 隧道，支持 chunked/content-length，仅 http 代理）重试一次；HTTP 层错误不回退；返回新增 `via: direct|proxy`，页面显示「直连/经代理」。
+- `lib/llm.ps1 Invoke-JoyLlmChat`：直连优先（**完整超时**，防止误杀慢而正常的响应→重复计费），`status=0`（网络层失败）且配置了代理时重试一次（WARN 日志）；HTTP 错误不回退。read.ps1 两个调用点（主总结 + JSON 修复）自动受益；GitHub API 调用维持原状（始终走代理，api.github.com 实测直连正常但保持一致性）。
+- 实测：`llm-probe.ps1` 直连成功（未触发回退）；服务重启后 `/api/llm/test` 返回 `via:"direct"` 453ms/200；`.work/test-via-proxy.js` 经 127.0.0.1:10808 CONNECT 隧道打真实模型 200（验证隧道分支）；`node --check` 与 PS 解析均 0 错误。
+
+read 部分成功语义修正（2026-11-20）：
+- 背景：`advancePipeline` 对 read 只看 `items` 中 `status=done` 的条目（≥1 即继续 render→publish→migrate，全 0 才停），不看 job 状态；而 `read.ps1` 把单条失败（含 404）计入 `failed` → exit 5 → 页面显示红色 failed，与"实际已继续发布"矛盾。
+- 修改：`read.ps1` 的 404 分支改计 `Result.gone`（不再计入 failed，日志与结果均含 gone 数）；真实运行时对 gone 条目自动 `DELETE /user/starred/<full>`（unstar）——GitHub 会把未 star 的仓库从 Star Lists 剔除，从而把死项目清出 unread，避免每轮重复 404；unstar 失败仅告警。
+- `server.js`：read 任务「退出码非 0 但 `succeeded>0`」时 job.state 置 `partial`（新增琥珀色 `.tag.partial` 样式），app.js 进度文案显示「消失 n」与「部分成功，已继续渲染发布」；render/publish/migrate 的 `state!=='succeeded'` 停止逻辑不变（read 分支本就不受该检查约束）。
+- 实测：read.ps1 解析 0 错误、`-DryRun -N 2` 正常（未触发 gone 分支）；server/app `node --check` 通过。
+
 文档同步 v1.3（2026-11-20）：
 - 三件套 + README + AGENTS 全量对齐实际实现：版本头改为「M1–M4c 已上线」；移除所有不存在的开关（`-NoPublish` / `-NoMark` / `-Repair` / `-RepairStar`），替换为实际的 `-DryRun` / `-NoWrite` / `-NoLlm` / `-NoPush` / `-NoStar`；
 - DESIGN：目录树删掉未建的 jobs.js/state.js/html.ps1/self-test.ps1；3.6 状态机改为运行期口径；渲染输入改为仅 summaries；/api/status 示例 queue→stats；5.5 发布流程按 publish.ps1 实际重写；9.2/9.3 崩溃恢复与一致性修复按「List 为唯一状态源」重写；新增偏差登记 D14（队列降级）/D15（run-joy 只读）/D16（概览 stats 化）；

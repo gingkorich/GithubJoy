@@ -104,7 +104,7 @@ repo, read:org, gist, user
 
 - 保存写入 `llm.json`，并立即 `icacls` 收紧为仅当前用户完全控制；
 - 页面只回显掩码（`sk-****abcd`），**不会**再显示明文；Key 输入框留空表示保留原值；
-- 测试连接只发一次 `max_tokens=1` 的请求，失败会显示 HTTP 状态与模型返回的错误；
+- 测试连接只发一次 `max_tokens=1` 的请求：**先直连，连不通（网络层失败）时自动改走系统代理**，成功提示会标注「直连 / 经代理」；失败会显示 HTTP 状态与模型返回的错误；
 - 也可以手工创建 `llm.json`（字段见 `DESIGN.md` 附录 A 与 FR-10），然后执行：
 
 ```powershell
@@ -853,7 +853,7 @@ git pull --ff-only
 | 2 | 配置 / 认证失败 | 缺 `gh.json`、token 无效 |
 | 3 | 发布失败 | 分叉、无权限、分支保护 |
 | 4 | 服务启动失败 | 端口全占、Node 版本低 |
-| 5 | 部分成功 | n 条里有失败，页面照常生成 |
+| 5 | 部分成功 | n 条里有失败（不含 404 消失）；read 有产出时任务显示 `partial` 并继续发布，退出码仍为 5 |
 
 ### 12.4 实现后需要回填本节的地方
 
@@ -884,3 +884,4 @@ git pull --ff-only
 | 控制台自动流水线 | ✅ 已回填（2026-11-19）：点一次「阅读」（n=1, Lite）后自动完成 阅读→渲染→发布→迁移；unread 55→54、read 5→6，Pages 新页面 200 |
 | AC-1～AC-14 实测结果 | M2–M5 逐条 |
 | 队列架构收尾（2026-11-20）：read/publish 死代码清理、概览 stats 化 | ✅ 已回填（2026-11-20，见 MEMORY「队列架构收尾清理」）：`read.ps1 -DryRun -N 2` 通过（unread 58 选中 2、queue 零写入）、`publish.ps1 -DryRun` 通过、server/app `node --check` 通过 |
+| read 部分成功语义（2026-11-20）：`gone` 独立计数 + 自动 unstar 清理、任务状态 `partial` | ✅ 已回填（2026-11-20，见 MEMORY 同名条目）：`read.ps1` 404 不再计入 failed；真实运行时对 gone 条目执行 unstar（失败仅告警）；server 对「read 退出码 5 但 succeeded>0」显示 `partial`（琥珀色标签），页面进度文案含「消失 n」与部分成功提示；流水线行为不变（≥1 条 done 即继续） |

@@ -55,6 +55,8 @@ header {
 .tag.running { color: var(--accent); border-color: var(--accent); }
 .tag.succeeded { color: var(--ok); border-color: var(--ok); }
 .tag.failed, .tag.cancelled { color: var(--bad); border-color: var(--bad); }
+.tag.partial { color: #a15c00; border-color: #d29922; }
+@media (prefers-color-scheme: dark) { .tag.partial { color: #d29922; } }
 
 .who { color: var(--muted); font-size: 14px; }
 .who.on { color: var(--ok); }

@@ -547,7 +547,7 @@ server.listen(port, '127.0.0.1', () => {
 | PUT | `/api/llm` | `{baseUrl,model,apiKey?,timeoutSec?}` | `200 {ok,keyMask}`；校验失败 `400` |
 | POST | `/api/llm/test` | — | `{ok,latencyMs,status,error?}` |
 
-> 模型配置的读写由 Node 完成：`PUT` 校验后原子写入 `llm.json`，并用 `icacls` 只授当前用户 `(F)`（Windows 下替换文件需要删除权限，只给 `(R,W)` 会导致 rename 报 EPERM）；`/api/llm/test` 由 Node 直接 `fetch` 模型的 `/chat/completions`（不走 GitHub API），**不发送 `temperature`**（部分路由模型如 `auto` 会直接 400 拒绝该参数），只返回状态与截断后的错误，不落盘。
+> 模型配置的读写由 Node 完成：`PUT` 校验后原子写入 `llm.json`，并用 `icacls` 只授当前用户 `(F)`（Windows 下替换文件需要删除权限，只给 `(R,W)` 会导致 rename 报 EPERM）；`/api/llm/test` 由 Node 直接请求模型的 `/chat/completions`（不走 GitHub API），**先直连**（Node `fetch` 恰好忽略代理环境变量），网络层失败（超时/DNS/拒绝）时经**内置 HTTP CONNECT 隧道客户端**（`net`+`tls`，仅支持 http 代理）重试一次，返回值带 `via: direct|proxy`；HTTP 层错误（4xx/5xx）不触发代理回退；**不发送 `temperature`**（部分路由模型如 `auto` 会直接 400 拒绝该参数），只返回状态与截断后的错误，不落盘。`scripts/lib/llm.ps1` 的正式调用采用同一策略：直连优先、`status=0` 时走代理重试一次，且直连使用完整超时（避免误杀慢而正常的响应导致重复计费）。
 
 `GET /api/status` 示例：
 
@@ -557,7 +557,6 @@ server.listen(port, '127.0.0.1', () => {
   "gh": { "installed": true, "version": "2.103.3", "auth": true, "login": "gingko", "scopes": "repo,read:org,gist,user" },
   "scan": { "lastAt": "2026-11-19T08:02:11Z", "durationMs": 41230, "added": 8, "scanned": 75, "error": null },
   "unread": { "count": 23, "refreshedAt": "2026-11-19T20:46:12Z" },
-  "stats": { "summarized": 8, "reports": 3, "published": 3 },
   "llm": { "configured": true, "baseUrl": "https://api.deepseek.com/v1", "model": "deepseek-chat", "keyMask": "sk-****9f2c" },
   "job": { "id": "scan-…", "kind": "scan", "state": "running", "progress": { "phase": "lists", "done": 20, "total": 75 } }
 }
@@ -958,7 +957,7 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 | D13 | `PSCustomObject` 缺属性统一用 `Add-Member -Force` 兜底（`readRunId`、`pushedAt`、`publishedUrl`），创建条目时直接带上常用字段 | DESIGN 3.1 / 5.5 | 直接给不存在的属性赋值会抛异常（实测导致 n=3 阅读、首次 publish 标记失败） |
 | D14 | 队列降级为 read 运行期临时工作集（不持久化、不跨轮）：GitHub Lists 为唯一状态源，summaries 为渲染数据源，reports-index 为发布状态源 | FR-2 原按队列持久化设计（2026-11-20 用户变更） | 消除「本地队列 vs 远端 List」双源漂移；失败/中断恢复改为依赖 List 与 summaries 的天然幂等 |
 | D15 | `run-joy.bat` 只透传 `read.ps1`（不自动渲染/发布/迁移）；完整流水线（read→render→publish→migrate）由控制台 `POST /api/read` 编排 | RUNBOOK 原设想 `run-joy.bat 5` 等价于页面「阅读」 | 无界面入口保持单一职责；需要发布时手动分步跑脚本 |
-| D16 | 控制台概览统计从 queue 状态计数改为 `stats{summarized, reports, published}`（summaries 文件数 + reports-index 聚合） | DESIGN 6.4 原统计 queue | 队列不跨轮后 queue 状态恒为 0，无信息量 |
+| D16 | ~~控制台概览统计改为 `stats{summarized, reports, published}`~~（2026-11-20 撤销：用户决定页面不需要这些数字，`dashboard()` 只返回 scan/read，避免无 UI 消费的死数据） | DESIGN 6.4 原统计 queue | 队列不跨轮后 queue 状态恒为 0；改派生 stats 又无展示价值，最终选择直接移除统计字段 |
 
 ---
 

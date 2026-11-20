@@ -125,7 +125,8 @@ function renderJob(j) {
     let qaTotal = 0;
     for (const x of (r.items || [])) qaTotal += (x.qaCount || 0);
     progress = '阅读' + (r.noWrite ? '（不写盘）' : '') + '：成功 ' + r.succeeded +
-      '，失败 ' + r.failed + '，跳过 ' + r.skipped + '，Q&A 共 ' + qaTotal + ' 组';
+      '，失败 ' + r.failed + '，消失 ' + (r.gone || 0) + '，跳过 ' + r.skipped + '，Q&A 共 ' + qaTotal + ' 组' +
+      (j.state === 'partial' ? '（部分成功，已继续渲染发布）' : '');
   }
   if (j.result && j.kind === 'render') {
     const r = j.result;
@@ -296,7 +297,7 @@ $('btnLlmTest').addEventListener('click', async () => {
   try {
     const r = await api('/api/llm/test', { method: 'POST', body: '{}' });
     if (r.ok) {
-      $('llmHint').textContent = '连接成功：' + r.latencyMs + ' ms（' + r.model + '）';
+      $('llmHint').textContent = '连接成功：' + r.latencyMs + ' ms（' + r.model + '，' + (r.via === 'proxy' ? '经代理' : '直连') + '）';
       $('llmHint').className = 'hint ok';
     } else {
       $('llmHint').textContent = '连接失败：' + (r.error || ('HTTP ' + r.status));

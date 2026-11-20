@@ -8,6 +8,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const net = require('net');
+const tls = require('tls');
 const { spawn, execFile, spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -57,19 +59,9 @@ function readJsonFile(file, fallback) {
 
 function dashboard() {
   const st = readJsonFile(path.join(DATA, 'state.json'), {}) || {};
-  // queue.json is a per-run scratch mirror (empty between runs), so stats are
-  // derived from summaries and reports-index instead of queue statuses.
-  let summarized = 0;
-  try {
-    summarized = fs.readdirSync(path.join(DATA, 'summaries'))
-      .filter((f) => f.toLowerCase().endsWith('.json')).length;
-  } catch (_) { /* summaries dir missing */ }
-  let reports = 0;
-  let published = 0;
-  const idx = readJsonFile(path.join(DATA, 'reports-index.json'), []);
-  const idxArr = Array.isArray(idx) ? idx : (idx ? [idx] : []);
-  reports = idxArr.length;
-  for (const e of idxArr) { if (e && e.published) published++; }
+  // queue.json is a per-run scratch mirror (empty between runs), so no queue
+  // stats are derived here; the page shows unread/read counts from the
+  // GitHub Lists probe instead.
   const ls = st.lastScan || null;
   return {
     scan: ls ? {
@@ -77,7 +69,6 @@ function dashboard() {
       totalUnreadAfter: ls.totalUnreadAfter, runId: ls.runId,
     } : null,
     read: st.lastRead || null,
-    stats: { summarized, reports, published },
   };
 }
 
@@ -202,26 +193,188 @@ async function testLlm() {
   const c = readLlm();
   if (!c.baseUrl || !c.model || !c.apiKey) return { ok: false, error: 'not_configured' };
   const url = /\/chat\/completions$/i.test(c.baseUrl) ? c.baseUrl : c.baseUrl + '/chat/completions';
+  const req = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + c.apiKey },
+    body: JSON.stringify({
+      model: c.model,
+      messages: [{ role: 'user', content: 'ping' }],
+      max_tokens: 1,
+      // temperature intentionally omitted: some models (e.g. router models) reject it
+    }),
+  };
   const started = Date.now();
+  // 1) direct first: Node fetch ignores env proxies, which is exactly what we want here
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + c.apiKey },
-      body: JSON.stringify({
-        model: c.model,
-        messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: 1,
-        // temperature intentionally omitted: some models (e.g. router models) reject it
-      }),
-      signal: AbortSignal.timeout(Math.min(c.timeoutSec, 30) * 1000),
-    });
+    const res = await fetch(url, Object.assign({}, req, {
+      signal: AbortSignal.timeout(Math.min(c.timeoutSec, 15) * 1000),
+    }));
     const text = await res.text();
     const latencyMs = Date.now() - started;
-    if (res.ok) return { ok: true, latencyMs, status: res.status, model: c.model };
-    return { ok: false, latencyMs, status: res.status, error: text.slice(0, 300) };
+    if (res.ok) return { ok: true, latencyMs, status: res.status, model: c.model, via: 'direct' };
+    // HTTP-level error: server is reachable, no proxy fallback needed
+    return { ok: false, latencyMs, status: res.status, model: c.model, via: 'direct', error: text.slice(0, 300) };
   } catch (e) {
-    return { ok: false, latencyMs: Date.now() - started, error: String((e && e.message) || e) };
+    // network-level failure (timeout / DNS / refused): fall through to proxy
   }
+  // 2) proxy fallback (http proxy via CONNECT tunnel; socks not supported)
+  const proxy = detectProxy().proxy;
+  if (!proxy) return { ok: false, latencyMs: Date.now() - started, error: 'direct_failed_no_proxy' };
+  try {
+    const r = await httpViaProxy(proxy, url, {
+      method: req.method, headers: req.headers, body: req.body,
+      timeoutMs: Math.min(c.timeoutSec, 30) * 1000,
+    });
+    const latencyMs = Date.now() - started;
+    const okStatus = r.status >= 200 && r.status < 300;
+    return {
+      ok: okStatus, latencyMs, status: r.status, model: c.model, via: 'proxy',
+      error: okStatus ? undefined : String(r.body || '').slice(0, 300),
+    };
+  } catch (e) {
+    return { ok: false, latencyMs: Date.now() - started, error: 'direct_and_proxy_failed: ' + String((e && e.message) || e) };
+  }
+}
+
+/*
+ * Minimal HTTP client through an http proxy (CONNECT tunnel for https targets).
+ * Node stdlib only; needed because global fetch ignores proxy env vars.
+ * Returns { status, body }. Rejects on network errors.
+ */
+function httpViaProxy(proxyUrl, targetUrl, opts) {
+  return new Promise((resolve, reject) => {
+    let u, pu;
+    try { u = new URL(targetUrl); } catch (_) { return reject(new Error('bad_url')); }
+    try { pu = new URL(proxyUrl); } catch (_) { return reject(new Error('bad_proxy_url')); }
+    if (pu.protocol !== 'http:') return reject(new Error('only_http_proxy_supported'));
+    const isHttps = u.protocol === 'https:';
+    const port = Number(u.port || (isHttps ? 443 : 80));
+    const timeoutMs = opts.timeoutMs || 20000;
+
+    let phase = isHttps ? 'tunnel' : 'request';
+    let headerBuf = '';
+    let bodyChunks = [];
+    let headerDone = false;
+    let status = 0;
+    let contentLength = -1;
+    let chunked = false;
+    let finished = false;
+    let tlsSock = null;
+
+    const sock = net.connect({ host: pu.hostname, port: Number(pu.port || 80) });
+    sock.setTimeout(timeoutMs, () => { sock.destroy(); if (!finished) { finished = true; reject(new Error('proxy_timeout')); } });
+    sock.on('error', (e) => { if (!finished) { finished = true; reject(e); } });
+
+    function sendRequest(s) {
+      const headers = Object.assign({}, opts.headers);
+      const body = opts.body == null ? '' : String(opts.body);
+      if (!Object.keys(headers).some((k) => k.toLowerCase() === 'host')) headers['Host'] = u.host;
+      if (!Object.keys(headers).some((k) => k.toLowerCase() === 'content-length')) {
+        headers['Content-Length'] = String(Buffer.byteLength(body));
+      }
+      if (!Object.keys(headers).some((k) => k.toLowerCase() === 'connection')) {
+        headers['Connection'] = 'close';
+      }
+      const lines = [opts.method + ' ' + (u.pathname || '/') + (u.search || '') + ' HTTP/1.1'];
+      for (const k of Object.keys(headers)) lines.push(k + ': ' + headers[k]);
+      s.write(lines.join('\r\n') + '\r\n\r\n' + body);
+    }
+
+    function activeSock() { return tlsSock || sock; }
+
+    function finish() {
+      if (finished || !headerDone) return;
+      finished = true;
+      let raw = Buffer.concat(bodyChunks);
+      if (chunked) {
+        // de-chunk (latin1 round-trip preserves bytes)
+        const text = raw.toString('latin1');
+        const out = [];
+        let pos = 0;
+        while (pos < text.length) {
+          const eol = text.indexOf('\r\n', pos);
+          if (eol < 0) break;
+          const size = parseInt(text.slice(pos, eol), 16);
+          if (isNaN(size) || size === 0) break;
+          out.push(text.substr(eol + 2, size));
+          pos = eol + 2 + size + 2;
+        }
+        raw = Buffer.from(out.join(''), 'latin1');
+      }
+      try { activeSock().destroy(); } catch (_) {}
+      resolve({ status: status, body: raw.toString('utf8') });
+    }
+
+    function maybeDone() {
+      if (chunked) {
+        const all = Buffer.concat(bodyChunks).toString('latin1');
+        if (/\r\n0\r\n(\r\n)?$/.test(all)) finish();
+      } else {
+        const total = bodyChunks.reduce((n, c) => n + c.length, 0);
+        if (contentLength >= 0 && total >= contentLength) finish();
+      }
+    }
+
+    function onData(buf) {
+      if (!headerDone) {
+        headerBuf += buf.toString('latin1');
+        const idx = headerBuf.indexOf('\r\n\r\n');
+        if (idx < 0) return;
+        const head = headerBuf.slice(0, idx);
+        const rest = Buffer.from(headerBuf.slice(idx + 4), 'latin1');
+        headerDone = true;
+        const headLines = head.split('\r\n');
+        status = Number((headLines[0] || '').split(' ')[1]) || 0;
+        for (let i = 1; i < headLines.length; i++) {
+          const ci = headLines[i].indexOf(':');
+          if (ci < 0) continue;
+          const name = headLines[i].slice(0, ci).trim().toLowerCase();
+          const val = headLines[i].slice(ci + 1).trim();
+          if (name === 'content-length') contentLength = Number(val);
+          if (name === 'transfer-encoding' && /chunked/i.test(val)) chunked = true;
+        }
+        bodyChunks = [];
+        if (rest.length) { bodyChunks.push(rest); maybeDone(); }
+        return;
+      }
+      bodyChunks.push(buf);
+      maybeDone();
+    }
+
+    sock.on('connect', () => {
+      if (isHttps) {
+        sock.write('CONNECT ' + u.hostname + ':' + port + ' HTTP/1.1\r\nHost: ' + u.hostname + ':' + port + '\r\nConnection: close\r\n\r\n');
+      } else {
+        sendRequest(sock);
+      }
+    });
+
+    sock.on('data', (buf) => {
+      if (phase === 'tunnel') {
+        headerBuf += buf.toString('latin1');
+        if (headerBuf.indexOf('\r\n\r\n') >= 0 || /\r\n$/.test(headerBuf)) {
+          const code = parseInt(headerBuf.split(' ')[1], 10);
+          if (code !== 200) {
+            finished = true;
+            sock.destroy();
+            return reject(new Error('proxy_connect_failed_' + code));
+          }
+          phase = 'request';
+          headerBuf = '';
+          tlsSock = tls.connect({ socket: sock, servername: u.hostname }, () => sendRequest(tlsSock));
+          tlsSock.setTimeout(timeoutMs, () => { tlsSock.destroy(); if (!finished) { finished = true; reject(new Error('proxy_timeout')); } });
+          tlsSock.on('error', (e) => { if (!finished) { finished = true; reject(e); } });
+          tlsSock.on('data', onData);
+          tlsSock.on('end', finish);
+          tlsSock.on('close', finish);
+        }
+        return;
+      }
+      onData(buf);
+    });
+    sock.on('end', finish);
+    sock.on('close', finish);
+  });
 }
 
 function stopService() {
@@ -756,6 +909,11 @@ async function startScriptJob(kind, scriptName, scriptArgs, timeoutMs, options) 
     }
     if (code !== 0 && !job.error) job.error = 'exit_' + code;
     job.state = (code === 0 && !(res && res.ok === false)) ? 'succeeded' : 'failed';
+    // read allows partial success: some items summarized -> pipeline continues
+    // with the done ones; show 'partial' instead of a misleading 'failed'.
+    if (job.kind === 'read' && job.state === 'failed' && res && res.succeeded > 0) {
+      job.state = 'partial';
+    }
     statusCache.value = null; listsCache.value = null; listsCache.at = 0;
     persistJob();
     advancePipeline(job, res).catch((e) => {
