@@ -643,7 +643,7 @@ summaries/*.json + queue.json + 本轮 job
 data/reports-index.json  ◀── 追加本轮条目
         │
         ▼  templates/report.html.tpl + index.html.tpl
-reports/<date>-n<n>.html、reports/latest.html、reports/index.html
+reports/<yyyyMMddHHmmss>.html（生成时刻，精确到秒；同一秒冲突时追加 `-1`、`-2`…）、reports/latest.html、reports/index.html
 ```
 
 - 模板用 `{{TOKEN}}` 占位，代码侧拼好 HTML 片段再替换；**不使用** PowerShell 的 `-f` 格式串（花括号易冲突）。

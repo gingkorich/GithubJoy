@@ -228,9 +228,12 @@ $footer = $L.footerTpl.Replace('{runId}', $runTag)
 $html = $html.Replace('{{FOOTER}}', (ConvertTo-JoyHtml $footer))
 
 if (-not (Test-Path -LiteralPath $OutDir)) { New-Item -ItemType Directory -Force -Path $OutDir | Out-Null }
-$file = Join-Path $OutDir ($dateStr + '-n' + $selected.Count + '.html')
-if (Test-Path -LiteralPath $file) {
-  $file = Join-Path $OutDir ($dateStr + '-n' + $selected.Count + '-' + $now.ToString('HHmmss') + '.html')
+$stamp = $now.ToString('yyyyMMddHHmmss')
+$file = Join-Path $OutDir ($stamp + '.html')
+$seq = 1
+while (Test-Path -LiteralPath $file) {
+  $file = Join-Path $OutDir ($stamp + '-' + $seq + '.html')
+  $seq++
 }
 Write-JoyTextFile $file $html
 $latest = Join-Path $OutDir 'latest.html'

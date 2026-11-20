@@ -224,7 +224,7 @@ GitHub Joy 把这件事做成一条流水线：
 ### FR-6 HTML 输出
 
 - 产物：
-  - `reports/<yyyy-MM-dd>-n<n>.html`：本次简报；
+  - `reports/<yyyyMMddHHmmss>.html`：本次简报，文件名为生成时刻（本地时间，精确到秒）；同一秒冲突时追加 `-1`、`-2`；
   - `reports/latest.html`：最近一次简报（同内容）；
   - `reports/index.html`：归档索引，按日期倒序列出历史页面；
   - 同日多次运行**不覆盖**已有文件（追加时间后缀），索引每条都可点开；
