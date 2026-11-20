@@ -1,9 +1,7 @@
 {
-  "version": 1,
   "network": {
     "proxy": "",
-    "autoDetect": true,
-    "noProxy": "localhost,127.0.0.1"
+    "autoDetect": true
   },
   "search": {
     "periods": ["today", "week", "month"],
@@ -16,7 +14,7 @@
     "fillRemaining": true,
     "intervalMs": 300
   },
-  "queue": { "maxAttempts": 3, "denylist": { "owners": [], "repos": [], "languages": [], "keywords": [] } },
+  "queue": { "denylist": { "owners": [], "repos": [], "languages": [], "keywords": [] } },
   "star": { "enabled": true, "maxPerScan": 25, "maxPerDay": 100, "intervalMs": 1000 },
   "read": {
     "maxN": 20,
@@ -27,9 +25,5 @@
     "keyFilesMin": 3,
     "keyFilesMax": 5,
     "keyFileMaxChars": 8000
-  },
-  "llm": { "maxInputChars": 70000, "temperature": 0.2, "maxRetries": 3 },
-  "publish": { "noJekyll": true, "commitPrefix": "joy:" },
-  "retention": { "workDays": 90, "reportsDays": 0 },
-  "service": { "host": "127.0.0.1", "port": 8787, "portFallbacks": [8788, 8789, 8790] }
+  }
 }

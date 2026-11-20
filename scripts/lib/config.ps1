@@ -29,15 +29,11 @@ function Write-JoyJsonFile([string]$Path, $Object) {
 }
 
 function Get-JoyConfig {
-  $root = Get-JoyRoot
-  $base = Read-JoyJsonFile (Join-Path $root 'config.sample.json')
-  if ($null -eq $base) { $base = [pscustomobject]@{} }
-  $over = Read-JoyJsonFile (Join-Path $root 'config.json')
-  if ($null -eq $over) { return $base }
-  foreach ($p in $over.PSObject.Properties) {
-    $base | Add-Member -NotePropertyName $p.Name -NotePropertyValue $p.Value -Force
-  }
-  return $base
+  # config.json is the single business config (sample file removed 2026-11-20).
+  # Keys without code consumers were dropped; only consumed keys are kept.
+  $cfg = Read-JoyJsonFile (Join-Path (Get-JoyRoot) 'config.json')
+  if ($null -eq $cfg) { return [pscustomobject]@{} }
+  return $cfg
 }
 
 function Get-JoyGhConfig {

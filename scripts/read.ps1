@@ -163,13 +163,8 @@ if (-not $NoWrite -and -not $DryRun) {
   Write-JoyLog 'queue reset for this read batch'
 }
 
-# reset items left in summarizing by a cancelled/interrupted run
-$stale = @($queue.items | Where-Object { [string]$_.status -eq 'summarizing' })
-if ($stale.Count -gt 0) {
-  foreach ($it in $stale) { $it.status = 'pending'; $it.lastError = 'interrupted' }
-  Save-Queue $queue
-  Write-JoyLog ("reset {0} interrupted item(s) to pending" -f $stale.Count) 'WARN'
-}
+# queue is a per-run scratch mirror: real runs reset it above, DryRun/NoWrite
+# never write it, so stale 'summarizing' entries cannot survive between runs.
 
 $listsRes = Get-JoyLists -Token $token -Proxy $proxy
 if (-not $listsRes.ok) { Fail-JoyRead 2 ('cannot read Lists: ' + [string]$listsRes.error) 'Check the user scope (RUNBOOK 6.5)' }
@@ -228,12 +223,7 @@ foreach ($li in $listItems) {
   }
 
   if ($existing) {
-    if ([string]$existing.status -in @('moved', 'gone')) { continue }
-    if (-not $Force -and [string]$existing.status -eq 'done' -and $existing.summaryPath -and (Test-Path -LiteralPath ([string]$existing.summaryPath))) {
-      $script:Result.skipped++
-      Write-JoyLog ("skip existing summary: {0}" -f $li.fullName)
-      continue
-    }
+    # queue-status checks removed: per-run scratch queue never holds moved/gone/done
   }
 
   if (-not $existing) {

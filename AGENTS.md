@@ -8,9 +8,9 @@ GitHub Trending 每日简报：扫描 today / week / month 榜单 → 未收藏�
 
 ## 当前状态
 
-- 阶段：**M1–M4c 完成并已上线**：`https://gingkorich.github.io/GithubJoy/`（unread 54 / read 6）；点一次「阅读」自动完成渲染、发布与迁移。
-- 已有：`MEMORY.md`、`docs/*`；代码：`joy.bat`、`scan.bat`、`service/*`（扫描按钮 + 进度 + 概览）、`scripts/scan.ps1`、`scripts/lib/*`、`config.sample.json`。
-- 未创建：`read.ps1`、`render.ps1`、`publish.ps1`、`migrate.ps1`；控制台尚未接扫描按钮。
+- 阶段：**M1–M4c 完成并已上线**：`https://gingkorich.github.io/GithubJoy/`；点一次「阅读」自动完成渲染、发布与迁移。
+- 架构口径（2026-11-20 起）：**GitHub Star Lists 是唯一状态源**（unread/read），`data/queue.json` 只是 read 运行期的临时工作集（运行结束清空，不跨轮持久化）；渲染数据源为 `data/summaries/`，发布状态源为 `data/reports-index.json`。
+- 已有：`MEMORY.md`、`docs/*`；代码：`joy.bat`、`scan.bat`、`run-joy.bat`、`service/*`（扫描/阅读按钮 + 进度 + 概览 + 模型配置）、`scripts/{scan,read,render,publish,migrate,status,probe-lists}.ps1`、`scripts/lib/*`、`scripts/prompts/*`、`templates/*`、`config.json`（唯一业务配置，仅含有代码消费的键，入库）。
 
 ## 开工前必须先确认
 
@@ -43,9 +43,10 @@ GitHub Trending 每日简报：扫描 today / week / month 榜单 → 未收藏�
 - 自包含 HTML 渲染
 - 配置外置、模板外置、纯 ASCII 脚本
 
-## 下一步（设计已定稿）
+## 下一步（M1–M4c 已上线）
 
-1. 按 `docs/DESIGN.md` 的 M0–M5 实现；
-2. 每步先干跑（`-DryRun` / `-NoPublish`）再真实写入；
-3. 实现中发现的偏差先回写 DESIGN（第 15 节）与 REQUIREMENTS，再改代码；
-4. 每完成一个里程碑，回填 `RUNBOOK.md` 第 12.4 节的实测项（R1/R2、输出样例、AC 结果）。
+1. 需求变更先回写 `REQUIREMENTS.md` 并升版本，再动代码（当前 v1.3）；
+2. 每步先干跑（scan `-DryRun` / read `-DryRun` / `-NoWrite` / publish `-DryRun` / migrate `-DryRun`）再真实写入；
+3. 实现中发现的偏差登记到 `DESIGN.md` 第 15 节；
+4. 每次改动回填 `RUNBOOK.md` 第 12.4 节的实测项；
+5. 已知未做项：每日自动调度（Q5 本期不做）、`self-test.ps1` 离线测试、`-Repair` 一键修复（DESIGN M5/D7）。

@@ -2,11 +2,11 @@
 
 | 项目 | 内容 |
 |---|---|
-| 文档版本 | 1.2（与 `REQUIREMENTS.md` v1.2 对应） |
-| 更新日期 | 2026-11-19 |
-| 对应实现 | `D:\AIproject\GithubJoy`（M1 已实现：`joy.bat`、`service/`、`scripts/probe-lists.ps1`；M2–M5 未实现） |
+| 文档版本 | 1.3（与 `REQUIREMENTS.md` v1.3 对应） |
+| 更新日期 | 2026-11-20 |
+| 对应实现 | `D:\AIproject\GithubJoy`（M1–M4c 已实现并上线；目录结构按实际文件修正，`jobs.js` / `state.js` / `html.ps1` / `self-test.ps1` 均并入/未建，见第 15 节 D14+） |
 | 上游文档 | [`REQUIREMENTS.md`](REQUIREMENTS.md)（FR-1～FR-14、AC-1～AC-14） |
-| 下游文档 | `RUNBOOK.md`（操作手册，待写） |
+| 下游文档 | `RUNBOOK.md`（操作手册 v1.3） |
 
 > 本文回答「怎么做」：模块边界、数据模型、接口契约、算法、失败处理。
 > 凡是需求未覆盖而这里新增的决定，都在第 15 节「与需求的偏差」登记，并注明理由。
@@ -56,15 +56,12 @@
 D:\AIproject\GithubJoy\
 ├─ joy.bat                     # 主入口：起服务 / --stop / -Port / -NoOpen
 ├─ scan.bat                    # 无界面扫描（排障、批处理）
-├─ run-joy.bat                 # 无界面阅读（-OnlyId / -IdsFile / -NoPublish / -Lite …）
-├─ config.sample.json          # 入库的配置样例
-├─ config.json                 # 本地配置（非密钥，可入库）
+├─ run-joy.bat                 # 无界面阅读（透传 read.ps1：-N / -OnlyId / -IdsFile / -Lite / -DryRun / -NoWrite / -NoLlm / -Force）
+├─ config.json                 # 唯一业务配置（非密钥，入库；仅含有代码消费的键，sample 已删除）
 ├─ gh.json                     # PAT + List 名 + 发布信息（gitignore）
 ├─ llm.json                    # 模型配置（gitignore，保存后 icacls 收紧）
 ├─ service/
-│  ├─ server.js                # HTTP 服务、路由、安全校验（仅标准库）
-│  ├─ jobs.js                  # 任务状态机、单飞锁、子进程管理
-│  ├─ state.js                 # state.json / queue.json 读写
+│  ├─ server.js                # HTTP 服务、路由、安全校验、任务状态机/单飞锁/子进程管理（仅标准库，单文件）
 │  └─ public/
 │     ├─ index.html
 │     ├─ app.js
@@ -75,16 +72,14 @@ D:\AIproject\GithubJoy\
 │  ├─ render.ps1               # FR-6（summaries → HTML）
 │  ├─ publish.ps1              # FR-8
 │  ├─ migrate.ps1              # FR-7（快照 / 迁移 / 回滚 / 补偿）
-│  ├─ status.ps1               # 供服务查询：gh 状态、unread 总数（M2 起）
+│  ├─ status.ps1               # 供服务查询：gh 状态、unread/read 总数
 │  ├─ probe-lists.ps1          # M1：Lists 只读探针（验证 R2）
-│  ├─ self-test.ps1            # 离线测试：fixtures → 去重 / 渲染 / 转义
 │  ├─ lib/
 │  │  ├─ config.ps1            # 配置读取（UTF-8 无 BOM，容忍 BOM）
 │  │  ├─ http.ps1              # 超时 / 重试 / 退避 / 错误详情
 │  │  ├─ github.ps1            # 认证解析、REST、GraphQL、raw
-│  │  ├─ llm.ps1               # 提示词、调用、JSON 修复、审核降级
-│  │  ├─ html.ps1              # 转义、模板渲染、卡片/索引
-│  │  └─ log.ps1               # 日志与脱敏
+│  │  ├─ llm.ps1               # 模型调用、JSON 修复
+│  │  └─ log.ps1               # 日志与脱敏（转义/渲染逻辑在 render.ps1 内，未单独建 html.ps1）
 │  └─ prompts/
 │     ├─ summarize.system.txt
 │     └─ summarize.user.tpl
@@ -161,7 +156,8 @@ D:\AIproject\GithubJoy\
 }
 ```
 
-- `seq` 单调递增，是「当前顺序」的唯一依据（FIFO，已确认）。
+- `seq` 单调递增，**仅在本轮草稿内用于展示与镜像顺序**；「当前顺序」的唯一依据是 **unread List 的实际顺序**（GitHub 维护，见第 4.3 节）。
+- 队列不跨轮持久化：read 开始 reset、`-DryRun`/`-NoWrite` 不落盘、结束清空；`published` / `publishedUrl` / `movedAt` 等字段是运行期镜像信息，跨轮状态以 `data/summaries/`（渲染）与 `data/reports-index.json`（发布）为准。
 - `status` 取值与流转见 3.6。
 - `otherListIds` 用于迁移时保留用户手工加的其它 List（见 5.4）。
 
@@ -233,7 +229,7 @@ D:\AIproject\GithubJoy\
   "state": "running",
   "startedAt": "…", "endedAt": null,
   "pid": 12345,
-  "args": { "n": null, "noPublish": false },
+  "args": { "n": 5, "lite": false, "noWrite": false, "dryRun": false },
   "progress": { "phase": "search", "done": 1, "total": 3 },
   "logFile": "logs/scan-2026-11-19.log",
   "exitCode": null,
@@ -244,7 +240,10 @@ D:\AIproject\GithubJoy\
 
 任务结束后 `state` 为 `succeeded` / `failed` / `cancelled`，`result` 写扫描或阅读的统计对象。
 
-### 3.6 队列状态机
+### 3.6 队列状态机（运行期内）
+
+> 2026-11-20 口径：队列是 read 运行期的**临时工作集**（开始 reset、`-DryRun`/`-NoWrite` 不落盘、结束清空），以下状态只在一轮内有效；
+> 跨轮状态由 GitHub Lists（unread/read 成员）+ `data/summaries/` + `data/reports-index.json` 承担。
 
 ```
             ┌──────────┐  取前 n   ┌────────────┐  写 summary  ┌──────┐
@@ -257,9 +256,9 @@ D:\AIproject\GithubJoy\
                                           └─ 404 仓库消失 ─▶ gone
 ```
 
-- `done` 且 `published=false`：摘要已生成、尚未发布 → 下次运行先补发（FR-7）。
-- `moved`：终态，不再参与任何选择。
-- `failed`：`seq` 不变，下次正常运行会再次被选中；超过 `maxAttempts`（默认 3）后停用，需 `-OnlyId` 手动重试。
+- `done`：summary 已写入 `data/summaries/`；发布与否由 `reports-index.json` 的 `published` 标记，与本队列无关。
+- `moved`：仅本轮镜像内可见；真实迁移以条目离开 unread List 为准（migrate 每轮实时查询）。
+- `failed`：失败条目留在 unread List 头部，下次 read 会再次选中（已生成 summary 的除外）；无 `maxAttempts` 上限，重试由人工控制（`-Force` 重做 / `-OnlyId` 定向）。
 
 ---
 
@@ -298,12 +297,12 @@ month : created:>=<UTC 今天-30 天> stars:>5000  archived:false fork:false
 候选 = 三周期并集
 key  = fullName.ToLowerInvariant()
 每 key 保留 scannedFrom[]（周期 + 名次）与首次出现的周期（today > week > month）
-同 key 多条：只入队一次，名次全部记录
-排序：按 seq 追加（FIFO），不因今天名次高而插队
+同 key 多条：只处理一次，名次全部记录
+处理顺序：按选择顺序（today → week → month → 补齐），不因今天名次高而插队
 过滤（按此顺序，逐项计数）：
   1) 已在 read                → already_read
   2) 已在 unread              → already_unread
-  3) queue 中 done / moved    → already_done
+  3) queue 中 done / moved    → already_done（历史分支：queue 为运行期草稿，通常恒空，不命中）
   4) 命中 denylist            → denied
   5) 已 star（viewerHasStarred，批量 25/次）→ starred
   6) 否则进入选择池
@@ -316,7 +315,7 @@ key  = fullName.ToLowerInvariant()
 按周期配额取：today 5 / week 8 / month 12（归属取 firstPeriod）
 不足 25 → 剩余候选按 star 降序补齐
 每轮上限 25；且不超过「每日剩余 star 额度」= 100 − 当日已 star
-队列按选择顺序追加（today → week → month → 补齐）
+选中条目按选择顺序处理（today → week → month → 补齐）
 ```
 
 `denylist` 支持：`owners[]`、`repos[]`、`languages[]`、`keywords[]`（对名称+描述做小写包含匹配）。
@@ -333,8 +332,8 @@ newItems 按 seq 升序：
   每次请求后 sleep config.star.intervalMs (1000)
 ```
 
-- star 失败不是致命错误：条目已入 unread，下次扫描因 `already_unread` 不会重复处理。
-- 补 star 用 `-RepairStar`（可选，不在 MVP 验收内）。
+- star 失败不是致命错误：该条**跳过 List 写入**（`inUnread=false`、记录 `lastError`），下轮扫描会重新发现它并补「star + List」。
+- 补 star 无专门开关（`-RepairStar` 未实现），依赖下轮扫描自然补做。
 
 ### 4.5 Lists 写入（语义已按官方 schema 核实）
 
@@ -351,7 +350,7 @@ mutation AddToUnread($itemId: ID!, $listIds: [ID!]!) {
 
 所以 `listIds` 必须 = `unread` + 该条目当前所属的其它 List；否则会清掉用户手工归类。
 
-**实测约束（2026-11-19）**：Star Lists **只保留已 star 的仓库**。用 `-NoStar` 先写 List，5 个条目在约 1 小时后从 `unread` 消失（40 → 35），且这 5 个 `viewerHasStarred=false`；剩余 35 个全部为 true。因此流程固定为「**先 star，再写 List**」，`-NoStar` 时跳过 List 写入并告警；队列中 `inUnread=false` 的条目会在下次运行时由 `toEnsure` 重试（补 star + 补 List）。
+**实测约束（2026-11-19）**：Star Lists **只保留已 star 的仓库**。用 `-NoStar` 先写 List，5 个条目在约 1 小时后从 `unread` 消失（40 → 35），且这 5 个 `viewerHasStarred=false`；剩余 35 个全部为 true。因此流程固定为「**先 star，再写 List**」，`-NoStar` 时跳过 List 写入并告警；未写入 List 的条目在下次扫描时经 star 过滤自然重新入选（`toEnsure` 队列分支为历史遗留，queue 恒空时不会命中）。
 
 读取成员关系的高效做法（每次扫描只做一次）：
 
@@ -478,30 +477,31 @@ mutation MoveToList($itemId: ID!, $target: [ID!]!) {
 ```
 
 - `-Rollback <RunId>`：按快照把 `moved` 条目的 `listIds` 恢复为「unread + 其它」，状态改回 `done`；`published` 保持 true，避免重复发布。
-- 单条失败：`lastError` 记录，状态保持 `done`，下次 `-Repair` 或正常运行时补迁移；**不重复调用 LLM**。
+- 单条失败：`lastError` 记录，条目保持「published 且仍在 unread」，下次 migrate 或正常运行时补迁移；**不重复调用 LLM**。
 - 迁移顺序：按 `seq` 升序逐条，间隔 300ms；整批失败率 >50% 时中止并提示（可能是 scope 或限额问题）。
 
 ### 5.5 发布（FR-8）
 
 ```
-publish.ps1 -RunId <id> [-NoPublish]
+publish.ps1 [-DryRun] [-NoPush] [-Message <msg>]
   1. 校验 gh.json.publish（repo / branch / dir / baseUrl）
-  2. 确认 reports/<run>.html、latest.html、index.html 存在
+  2. 确认 reports/ 下待发布文件存在（取 reports-index 中 published=false 的条目）
   3. 确保仓库根 `.nojekyll` 存在（不存在则创建并加入提交）
   4. git fetch origin
-     本地落后或分叉 → 中止，打印「先手动 pull / 处理冲突」；不自动 rebase
-  5. git add -- reports/<file>.html reports/latest.html reports/index.html .nojekyll
+     本地落后 → 中止，打印「先手动 pull --rebase」；不自动 rebase
+  5. git add -- <发布的页面文件>（只列本轮文件，禁止 -A）
   6. git diff --cached --quiet → 无变化则跳过 commit（但仍视为发布成功）
   7. git commit -m "joy: <yyyy-MM-dd> n=<n>"
-  8. git push origin main
+  8. git push origin <branch>（gh.json.publish.branch，本机为 master）
   9. 失败：本地产物保留，输出可执行建议，退出码 3
+ 10. 推送成功后把 reports-index 对应条目标 published=true / pushedAt / url
 ```
 
-- 页面地址：`<baseUrl>/reports/<file>`；根 `index.html` 只是跳转到 `reports/latest.html` 的入口。
+- 页面地址：`<baseUrl>/<dir>/<file>`；根 `index.html` 只是归档入口（手工维护，见 RUNBOOK 12.2）。
 
 - **禁止** `git add -A`；`git status --porcelain` 中与本轮无关的改动只提示、不提交。
-- 推送后不等待 Pages 构建（通常 10–60 秒）；state 记录 `pushedAt`，页面文案只写「已推送」不写「已上线」。
-- `-NoPublish`：只到第 2 步之前的本地产物，不复制、不提交、不推送，且不触发迁移。
+- 推送后不等待 Pages 构建（通常 10–60 秒）；index 条目记录 `pushedAt`，页面文案只写「已推送」不写「已上线」。
+- `-DryRun`：只列出将发布的文件，不提交不推送；`-NoPush`：本地提交但不推送（两者都不标 published）。
 
 ---
 
@@ -535,7 +535,7 @@ server.listen(port, '127.0.0.1', () => {
 | POST | `/api/render` | `{"n":3}` 或 `{"onlyId":"owner/name"}` | `202 {jobId}` |
 | POST | `/api/publish` | `{"dryRun":false,"noPush":false}` | `202 {jobId}` |
 | POST | `/api/migrate` | `{"dryRun":false}` | `202 {jobId}` |
-| POST | `/api/read` | `{"n":5,"noPublish":false}` | `202 {jobId}`；`n` 越界 → `400` |
+| POST | `/api/read` | `{"n":5,"lite":false,"noWrite":false,"dryRun":false}` | `202 {jobId}`；`n` 越界 → `400` |
 | GET | `/api/jobs/<id>` | `?tail=200` | `{ job, lines:[…] }` |
 | POST | `/api/jobs/<id>/cancel` | — | `200 {state:"cancelled"}` |
 | GET | `/api/reports` | — | `[{file,size,mtime,entries,published,url}]` |
@@ -557,7 +557,7 @@ server.listen(port, '127.0.0.1', () => {
   "gh": { "installed": true, "version": "2.103.3", "auth": true, "login": "gingko", "scopes": "repo,read:org,gist,user" },
   "scan": { "lastAt": "2026-11-19T08:02:11Z", "durationMs": 41230, "added": 8, "scanned": 75, "error": null },
   "unread": { "count": 23, "refreshedAt": "2026-11-19T20:46:12Z" },
-  "queue": { "pending": 18, "done": 4, "failed": 1, "gone": 0, "moved": 52 },
+  "stats": { "summarized": 8, "reports": 3, "published": 3 },
   "llm": { "configured": true, "baseUrl": "https://api.deepseek.com/v1", "model": "deepseek-chat", "keyMask": "sk-****9f2c" },
   "job": { "id": "scan-…", "kind": "scan", "state": "running", "progress": { "phase": "lists", "done": 20, "total": 75 } }
 }
@@ -637,22 +637,24 @@ spawn('powershell.exe', ['-NoProfile','-ExecutionPolicy','Bypass','-File','scrip
 ### 7.1 渲染管线
 
 ```
-summaries/*.json + queue.json + 本轮 job
+summaries/*.json（渲染唯一输入；-N 取最近修改的 N 份，或 -OnlyId / -IdsFile / -RunId 定向）
         │
-        ▼  render.ps1（lib/html.ps1）
+        ▼  render.ps1（转义与模板渲染内置于脚本）
 data/reports-index.json  ◀── 追加本轮条目
         │
-        ▼  templates/report.html.tpl + index.html.tpl
+        ▼  templates/report.html.tpl + index.html.tpl + labels.json（中文文案外置）
 reports/<yyyyMMddHHmmss>.html（生成时刻，精确到秒；同一秒冲突时追加 `-1`、`-2`…）、reports/latest.html、reports/index.html
 ```
+
+> 注：queue.json 不再作为渲染输入（队列是运行期草稿，read 结束即清空）。
 
 - 模板用 `{{TOKEN}}` 占位，代码侧拼好 HTML 片段再替换；**不使用** PowerShell 的 `-f` 格式串（花括号易冲突）。
 - `data/reports-index.json` 是索引的唯一数据源（不反向解析 HTML）：
 
 ```json
-[{ "file": "2026-11-19-n5.html", "date": "2026-11-19", "n": 5, "count": 4,
-   "failed": 1, "createdAt": "…", "published": true,
-   "url": "https://<login>.github.io/GithubJoy/2026-11-19-n5.html" }]
+[{ "file": "20261120130508.html", "date": "2026-11-20", "count": 5, "qa": 28,
+   "ids": ["owner/name", …], "createdAt": "…", "published": false,
+   "url": "https://<login>.github.io/GithubJoy/reports/<file>.html" }]
 ```
 
 ### 7.2 转义规则（硬要求）
@@ -670,7 +672,7 @@ function ConvertTo-HtmlText([string]$s) {
 - **先转义、再换行转 `<br>`**，因此 `<br>` 是唯一被放行的标签，不存在「先放行再转义」的绕过路径。
 - README 里的 Markdown/HTML 一律按纯文本展示；不做 Markdown 渲染。
 - 属性值（链接 `href`）额外校验：只允许 `https://github.com/`、`https://raw.githubusercontent.com/`、`https://<login>.github.io/` 前缀，其他丢弃。
-- 单测用例（`self-test.ps1`）：`<script>alert(1)</script>`、`"><img src=x onerror=1>`、`&amp;`、`</style>`、含 U+2028、超长单行。
+- 转义已实测（2026-11-19，人工用例而非 self-test.ps1，后者未创建）：`<script>alert(1)</script>`、`"><img src=x onerror=1>`、`&`、引号、换行全部转义，仅放行 `<br>`。
 
 ### 7.3 卡片结构（顺序固定）
 
@@ -770,23 +772,25 @@ function ConvertTo-HtmlText([string]$s) {
 | Search 请求中 | 无新 `trending-*.json` | 重新扫描；旧快照不被覆盖 |
 | 写 `trending-*.json` 中途 | 临时文件残留 | 启动时清理 `*.tmp`；正式文件未变 |
 | queue 写入中途 | `queue.json.tmp` 残留 | 原子替换：先写 tmp 再 `Move-Item -Force`；残留 tmp 直接删除 |
-| 加 unread 中途 | 部分条目在 List、queue 已记 `inUnread=false` | 下次扫描重建 List 索引 → 已存在的补记 `inUnread=true`，不重复 mutation |
-| LLM 调用中 | 该条 `summarizing` | 启动时把 `summarizing` 重置为 `pending`（`attempts+1`） |
+| 加 unread 中途 | 部分条目已在 List、部分未写入 | 下次扫描按 List 实时成员判断（幂等），未写入的经 star 过滤重新入选 |
+| LLM 调用中 | 该条留在 unread List，队列草稿丢弃 | 中断不产生 `summarizing` 残留（队列不跨轮）；下次 read 重新选中该条（已生成 summary 的除外） |
 | 写 summary 中途 | `.tmp` 残留 | 删除 tmp；该条按未完成处理 |
 | 渲染中 | `reports/*.tmp` | 删除 tmp；重新渲染 |
 | 发布中（已 commit 未 push） | 本地多一个 commit | 下次 `git fetch` 判断：本地 ahead 1 → 直接 push（提交信息已含 RunId） |
-| 发布中（已 push 未迁移） | 条目 `done/published=false` | 下次运行补发布（无 diff 即成功）→ 再迁移 |
-| 迁移中 | 部分 `moved`、部分 `done` | 只处理 `done && published=true`，天然续跑 |
+| 发布中（已 push 未迁移） | `reports-index` 中条目 `published=true`、仍留在 unread List | 下次运行 `migrate.ps1` 自动补迁移（按 index 的 `ids` ∩ unread 实时成员选择） |
+| 迁移中 | 部分条目已移、部分未移 | migrate 只处理「published 且仍在 unread」的条目，天然续跑 |
 
-### 9.3 `-Repair`（可选但建议实现）
+### 9.3 一致性修复与回滚（按实际实现）
 
 ```
--Repair            # 按顺序做：重算 List 索引 → 补 star → 补发布 → 补迁移
--Repair -DryRun    # 只打印将要做的动作
--Rollback <RunId>  # 按快照恢复 unread/read
+一致性修复：无专门 -Repair 开关（未实现）。
+  - List 漏写 / 漏 star：重跑 scan.ps1（幂等，按 List 实时成员补做）；
+  - 漏发布：重跑 render.ps1 + publish.ps1（publish 无 diff 视为成功）；
+  - 漏迁移：重跑 migrate.ps1（只处理 published 且仍在 unread 的条目）。
+回滚：migrate.ps1 -Rollback <migrate-runId>（按 data/state/lists-<runId>.json 快照恢复）
 ```
 
-`-Repair` 不调用 LLM，不生成新页面；只修状态与远端一致性。
+上述修复均不调用 LLM、不生成新页面；只修状态与远端一致性。
 
 ---
 
@@ -866,6 +870,8 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 
 ### 12.1 离线测试（`scripts/self-test.ps1`，不联网）
 
+> ⚠️ 2026-11-20 现状：`self-test.ps1` **未创建**。下表为原计划用例，实际验证方式为人工用例 + 各脚本 `-DryRun` 实测（结果已回填 RUNBOOK 12.4）。
+
 | 用例 | 断言 |
 |---|---|
 | 去重 | 三周期含同仓库 → 入队 1 条、`scannedFrom` 3 项 |
@@ -874,7 +880,7 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 | 转义 | 注入样例 → 输出不含 `<script`、`onerror=`，只含 `<br>` |
 | 模板 | 缺 `qa` 字段 → 渲染失败并给出明确错误（不产出半成品） |
 | 索引 | 连续两轮 → 两条记录、日期倒序 |
-| 队列状态机 | `summarizing` 残留 → 启动时重置为 `pending` |
+| 队列状态机 | 队列不跨轮持久化：中断不产生 `summarizing` 残留；失败条目留在 unread List 下次重选 |
 
 ### 12.2 验收标准映射
 
@@ -887,7 +893,7 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 | AC-5 阅读顺序 | 打印选择清单与 queue 前 n 条比对 |
 | AC-6 总结质量 | 抽 3 条人工核对 refs 与 sources |
 | AC-7 页面安全 | 断网打开 + 注入样例 + 打印/移动端 |
-| AC-8 状态迁移 | 统计 unread/read 数量差；`-NoPublish` 对照 |
+| AC-8 状态迁移 | 统计 unread/read 数量差；只跑 `read.ps1`（不跑 publish/migrate）作对照 |
 | AC-9 发布 | Pages 地址 + `git show --stat` 只含 `reports/*.html` 与根 `.nojekyll` |
 | AC-10 故障恢复 | 断网/中断/429 模拟，重跑不重复计费 |
 | AC-11 控制台 | 双击、扫描、2 秒内刷新、关窗释放端口 |
@@ -903,7 +909,7 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 |---|---|---|---|---|
 | R1 | `gh auth login --web` 在无 TTY 的子进程中可能改变输出或等待 stdin | 点「登录」后卡住 | ✅ **已实测（2026-11-19，gh 2.103.3）**：非 TTY 下直接输出 `! One-time code (XXXX-XXXX) copied to clipboard` 与 device URL，不等待回车，代码可稳定解析；`taskkill /T` 取消有效 | 保留 stdin 换行兜底与 5 分钟超时；授权完成后的 scope 行为仍待 R2 |
 | R2 | Lists 写入需要 `user` scope，`--scopes "user"` 为追加语义 | 登录成功但写入失败 | ✅ **读取与写入均已实测（2026-11-19）**：scope 为 `gist, read:org, repo, user`；13 个 List 可读；成功创建 `read` 并把 5 个条目加入 `unread`，失败 0 | 多 List 合并（R3）仍需一条「已属其它 List」的真实样本验证 |
-| R3 | `updateUserListsForItem` 是**整体替换** | 可能清掉用户手工归类 | **已从 schema 确认** | 写入前合并 `otherListIds`；`self-test.ps1` 覆盖「条目已在其它 List」用例 |
+| R3 | `updateUserListsForItem` 是**整体替换** | 可能清掉用户手工归类 | **已从 schema 确认** | 写入前合并 `otherListIds`（scan/migrate 均已实现） |
 | R4 | List 索引随使用增长（数百到上千条） | 扫描变慢、GraphQL 点数上升 | 未知 | 索引缓存到 `data/list-index.json`（TTL 10 分钟）；超过 2000 条时提示 |
 | R5 | Search 口径不含「老仓库突然爆火」 | 漏项目 | 已知（Q3 取舍） | 页面与日志标注 `source=search`；后续可选增加 Trending 页兜底（需改需求） |
 | R6 | PowerShell 5.1 编码问题 | 中文乱码、JSON 解析失败 | 已知坑 | `.ps1` 纯 ASCII；JSON UTF-8 无 BOM；`Invoke-RestMethod` 结果按字节还原 |
@@ -924,12 +930,12 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 | M1 认证 | `gh` 状态/登录/退出、Lists 只读探针 | 设备码登录/退出走通；R1 通过；R2 读取通过 |
 | M3a 模型配置 | `/api/llm`（读写 + 测试）、页面「模型」区 | 保存后只显示掩码；测试连接返回状态与延迟 |
 | M2 扫描 | `scan.ps1`（search → 去重 → queue → Lists → star），先 `-DryRun` | 干跑输出统计且不写远端；再真实写入，AC-1/2/3/14 通过 |
-| M3 阅读 | `read.ps1` + prompts + `llm.ps1` 校验 | `-NoPublish` 跑 `n=3`，产出 3 份 summary；AC-6/13 通过 |
-| M4a 渲染 | `render.ps1`、`templates/*`、`templates/labels.json` | 本地 `reports/<date>-n<n>.html` + latest + index；注入样例全部转义 |
-| M4 渲染发布 | `render.ps1`、`publish.ps1`、`migrate.ps1` | `-NoPublish` 本地页面正确；真实发布后 Pages 可访问；AC-7/8/9 通过 |
-| M5 加固 | `self-test.ps1`、`-Repair`、`-Rollback`、README/RUNBOOK | 离线测试全绿；断网/中断演练可续跑；AC-4/5/10/11/12 通过 |
+| M3 阅读 | `read.ps1` + prompts + `llm.ps1` 校验 | ✅ 已完成（实测 n=1/n=3/deep）；AC-6/13 通过 |
+| M4a 渲染 | `render.ps1`、`templates/*`、`templates/labels.json` | ✅ 已完成（实测 1/3 卡片报告）；注入样例全部转义 |
+| M4 渲染发布 | `render.ps1`、`publish.ps1`、`migrate.ps1` | ✅ 已完成：`-DryRun` / `-NoPush` 分级试跑；真实发布后 Pages 200；AC-7/8/9 通过 |
+| M5 加固 | `self-test.ps1`、`-Repair`、README/RUNBOOK | ⚠️ 未建：self-test.ps1 与 `-Repair` 未实现（转义用人工用例验证；一致性修复靠各脚本幂等重跑）；`-Rollback` 已在 migrate.ps1 实现 |
 
-**M0–M4 的每个脚本都必须先支持 `-DryRun` 或 `-NoPublish`**，干跑输出「将要做的事」再真实执行。
+**各脚本实际支持的干跑开关**：scan `-DryRun` / `-NoStar`；read `-DryRun` / `-NoWrite` / `-NoLlm` / `-Lite` / `-Force`；render 无写远端风险（本地文件）；publish `-DryRun` / `-NoPush`；migrate `-DryRun`。
 
 ---
 
@@ -943,22 +949,24 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 | D4 | 索引数据源为 `data/reports-index.json` | FR-6 只要求索引页 | 不反向解析 HTML，生成更稳 |
 | D5 | Node 不直接调 GitHub API | 需求未规定分层 | 认证与重试集中在一处，避免两套实现漂移 |
 | D6 | 新增退出码 4（服务启动失败）、5（部分成功） | FR-11 未定义退出码 | 页面与 bat 需要区分「起不来」与「部分失败」 |
-| D7 | 新增 `-Repair` / `-RepairStar` | 需求未列 | 崩溃恢复与 star 补做，均为幂等只读/补写操作 |
+| D7 | ~~新增 `-Repair` / `-RepairStar`~~（未实现，2026-11-20 移除） | 需求未列 | 一致性修复改由各脚本幂等重跑承担（见 9.3）；`-Rollback` 保留在 migrate.ps1 |
 | D8 | `config.json` 入库（非密钥） | FR-10 表格 | 便于复现与 review；密钥仍在 `gh.json` / `llm.json` |
 | D9 | 脚本向 stdout 输出单行 JSON 进度事件 | 需求未规定 | 服务需要展示阶段与进度 |
 | D10 | M1 阶段的 gh 状态由 Node 直接调用 `gh auth status --json` 提供；`status.ps1` 顺延到 M2（需要 unread 总数时） | DESIGN 2 目录树 | 少一层进程转发；GitHub API 仍未进入 Node，认证逻辑依旧只在 gh / PowerShell 侧 |
-| D11 | `read.ps1` 增加 `-NoWrite`（抓材料 + 调模型但不落盘）与 `-NoLlm`（只抓材料）两个试跑开关；`-NoPublish` 在 M3b 阶段暂不生效 | DESIGN 5.1（渲染/发布属 M4） | 先验证材料与 JSON 质量，避免把半成品写入队列 |
+| D11 | `read.ps1` 增加 `-NoWrite`（抓材料 + 调模型但不落盘）与 `-NoLlm`（只抓材料）两个试跑开关 | DESIGN 5.1（渲染/发布属 M4） | 先验证材料与 JSON 质量，避免把半成品写入队列 |
 | D12 | `publish.ps1` 增加 `-DryRun`（只打印计划）与 `-NoPush`（复制并本地提交、不推送）；内部 runId 变量统一命名为 `$runTag` | DESIGN 5.5 | 规避 PowerShell 变量大小写不敏感导致 `$runId` 覆盖参数 `$RunId`（render/migrate 已踩） |
 | D13 | `PSCustomObject` 缺属性统一用 `Add-Member -Force` 兜底（`readRunId`、`pushedAt`、`publishedUrl`），创建条目时直接带上常用字段 | DESIGN 3.1 / 5.5 | 直接给不存在的属性赋值会抛异常（实测导致 n=3 阅读、首次 publish 标记失败） |
+| D14 | 队列降级为 read 运行期临时工作集（不持久化、不跨轮）：GitHub Lists 为唯一状态源，summaries 为渲染数据源，reports-index 为发布状态源 | FR-2 原按队列持久化设计（2026-11-20 用户变更） | 消除「本地队列 vs 远端 List」双源漂移；失败/中断恢复改为依赖 List 与 summaries 的天然幂等 |
+| D15 | `run-joy.bat` 只透传 `read.ps1`（不自动渲染/发布/迁移）；完整流水线（read→render→publish→migrate）由控制台 `POST /api/read` 编排 | RUNBOOK 原设想 `run-joy.bat 5` 等价于页面「阅读」 | 无界面入口保持单一职责；需要发布时手动分步跑脚本 |
+| D16 | 控制台概览统计从 queue 状态计数改为 `stats{summarized, reports, published}`（summaries 文件数 + reports-index 聚合） | DESIGN 6.4 原统计 queue | 队列不跨轮后 queue 状态恒为 0，无信息量 |
 
 ---
 
-## 附录 A：`config.sample.json`
+## 附录 A：`config.json`（2026-11-20 起为唯一业务配置，仅含有代码消费的键）
 
 ```json
 {
-  "version": 1,
-  "network": { "proxy": "", "autoDetect": true, "noProxy": "localhost,127.0.0.1" },
+  "network": { "proxy": "", "autoDetect": true },
   "search": {
     "periods": ["today", "week", "month"],
     "perPage": 100,
@@ -970,7 +978,7 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
     "fillRemaining": true,
     "intervalMs": 300
   },
-  "queue": { "maxAttempts": 3, "denylist": { "owners": [], "repos": [], "languages": [], "keywords": [] } },
+  "queue": { "denylist": { "owners": [], "repos": [], "languages": [], "keywords": [] } },
   "star": { "enabled": true, "maxPerScan": 25, "maxPerDay": 100, "intervalMs": 1000 },
   "read": {
     "maxN": 20,
@@ -981,12 +989,8 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
     "keyFilesMin": 3,
     "keyFilesMax": 5,
     "keyFileMaxChars": 8000
-  },
-  "llm": { "maxInputChars": 70000, "temperature": 0.2, "maxRetries": 3 },
-  "publish": { "noJekyll": true, "commitPrefix": "joy:" },
-  "retention": { "workDays": 90, "reportsDays": 0 },
-  "service": { "host": "127.0.0.1", "port": 8787, "portFallbacks": [8788, 8789, 8790] }
+  }
 }
 ```
 
-> `reportsDays: 0` 表示永久保留（Q6 已确认）。
+> 2026-11-20 变更：删除 `config.sample.json`；`Get-JoyConfig` 与 server 的 `loadConfig` 改为只读 `config.json`。已移除无代码消费者的键：顶层 `version`、`network.noProxy`、整个 `llm`（模型配置只认 `llm.json`）、`publish`、`retention`、`service` 节。

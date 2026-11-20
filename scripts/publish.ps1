@@ -21,7 +21,6 @@ $root = Get-JoyRoot
 $dataDir = Join-Path $root 'data'
 $reportsDir = Join-Path $root 'reports'
 $idxPath = Join-Path $dataDir 'reports-index.json'
-$queuePath = Join-Path $dataDir 'queue.json'
 $runId = 'publish-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
 $started = Get-Date
 
@@ -219,25 +218,7 @@ if ($script:Result.pushed) {
     }
   }
   Write-JoyJsonFile $idxPath $entries
-
-  $queue = Read-JoyJsonFile $queuePath
-  if ($queue -and $queue.PSObject.Properties.Name -contains 'items') {
-    $map = @{}
-    foreach ($q in @($queue.items)) { if ($q.id) { $map[([string]$q.id).ToLowerInvariant()] = $q } }
-    foreach ($e in $pending) {
-      if (-not ($e.PSObject.Properties.Name -contains 'ids')) { continue }
-      foreach ($id in @($e.ids)) {
-        $k = ([string]$id).ToLowerInvariant()
-        if ($map.ContainsKey($k)) {
-          Set-JoyProp $map[$k] 'published' $true
-          Set-JoyProp $map[$k] 'publishedUrl' ([string]$e.url)
-        }
-      }
-    }
-    $queue.updatedAt = $now
-    Write-JoyJsonFile $queuePath $queue
-  }
-  Write-JoyLog 'marked entries and queue items as published'
+  Write-JoyLog 'marked report entries as published (queue is a per-run scratch set; nothing to mark there)'
 }
 
 $script:Result.ok = $true

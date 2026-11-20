@@ -98,7 +98,7 @@ REST「Starring」只有：列出 stargazers、星标数、星标历史、列出
 7. HTML 要自包含（内联 CSS、深色模式、打印友好），所有外部文本转义，只放行 `<br>`。
 8. 破坏性操作（移动收藏夹、提交仓库）前先做可回滚备份/记录。
 9. 文档三件套：REQUIREMENTS / DESIGN / RUNBOOK，随代码同步更新。
-10. 先 `-NoPublish`/`-NoMark` 试跑，再执行真实写入。
+10. 先 `-DryRun` / `-NoWrite` / `-NoPush` / `-NoStar` 干跑，再执行真实写入（`-NoPublish` / `-NoMark` / `-Repair` 是旧文档遗留的开关名，实际不存在）。
 
 ## 7. 尚未确认的问题（新会话先问）
 
@@ -192,6 +192,22 @@ M2 扫描（2026-11-19，DryRun 通过）：
 - 控制台扫描按钮（2026-11-19）：`POST /api/scan`（`{dryRun:true}` 可选）、`GET /api/jobs/:id` 进度、页面概览（上次扫描/新增/累计 unread/队列）。DryRun 联调：候选 68、added 20、ensured 5、star 25、unread 35→60（计划值）。
 
 阈值 v3（2026-11-19）：today >100 / week >2000 / month >5000。实测 totalCount 2 / 5 / 30，去重 37；已 unread 19、已 star 1；剩余 17 全部入选（month 12 + 补齐 5），无 capped；计划 star 17、unread 60→77。
+
+配置收敛为 config.json（2026-11-20）：
+- `config.sample.json` 删除；`config.json` 成为唯一业务配置并入库，`Get-JoyConfig`（lib/config.ps1）与 `server.js loadConfig` 改为只读它；
+- 精确核对代码消费后移除全部死键：顶层 `version`、`network.noProxy`、`llm`（模型配置只认 `llm.json`，含 `temperature`，`auto` 模型拒收该参数）、`publish`、`retention`、`service` 节；保留 network/search/queue.denylist/star/read 全部活键；
+- 同步 DESIGN 附录 A、目录树、REQUIREMENTS FR-10 表、RUNBOOK 2.5/12.2、AGENTS「已有」列表。
+
+文档同步 v1.3（2026-11-20）：
+- 三件套 + README + AGENTS 全量对齐实际实现：版本头改为「M1–M4c 已上线」；移除所有不存在的开关（`-NoPublish` / `-NoMark` / `-Repair` / `-RepairStar`），替换为实际的 `-DryRun` / `-NoWrite` / `-NoLlm` / `-NoPush` / `-NoStar`；
+- DESIGN：目录树删掉未建的 jobs.js/state.js/html.ps1/self-test.ps1；3.6 状态机改为运行期口径；渲染输入改为仅 summaries；/api/status 示例 queue→stats；5.5 发布流程按 publish.ps1 实际重写；9.2/9.3 崩溃恢复与一致性修复按「List 为唯一状态源」重写；新增偏差登记 D14（队列降级）/D15（run-joy 只读）/D16（概览 stats 化）；
+- RUNBOOK：2.7 首跑改用 DryRun/NoWrite 阶梯；3.2/3.3 明确 run-joy.bat 只做阅读、发布迁移需页面流水线或分步脚本；7.3 一致性修复改为分步重跑；7.4 回滚改用 migrate.ps1 -Rollback；7.5 queue.json 损坏可直接删；12.1/12.2/12.4 同步。
+
+队列架构收尾清理（2026-11-20）：
+- 背景确认：队列已是"read 运行期临时工作集"（开始 reset、`Save-Queue` 在 DryRun/NoWrite 下不落盘、结束清空），GitHub Star Lists 是唯一状态源；migrate 从 `reports-index.json` 的 published ids ∩ unread List 实时成员选择，不依赖队列。
+- 本次清理：`read.ps1` 删除死逻辑（启动时重置遗留 `summarizing`、选择阶段 `moved/gone/done` 队列状态判断——scratch 队列里永远不会出现这些状态）；`publish.ps1` 删除"标记队列条目 published"死代码块及 `$queuePath`；`server.js` 概览不再统计 queue 状态（恒 0），改为 stats{summarized= summaries 文件数, reports, published}（来自 reports-index）；`app.js` "readPending" 误显 unread 数 → 改用 `readCount`（GitHub read List 数量）。
+- 配置/文档：`config.sample.json` 与 DESIGN 附录删除无消费者的 `queue.maxAttempts`；AGENTS.md「当前状态」改为与实际一致（此前同时写着"已上线"和"read.ps1 未创建"，自相矛盾），并写入新架构口径。
+- 遗留（未处理）：scan.ps1 仍读取空队列做 `toEnsure`/`already_done` 判断（恒不命中，无害）；`render.ps1 -RunId` 依赖 summary 的 `readRunId` 仍可用；migrate `-RunId` 已显式报不支持。
 
 阅读源改为 unread List（2026-11-19）：
 - 背景：GitHub unread 60 个，但本地「待读」只有 23；原有 35 个从未入队（scan 把它们当 `already_unread` 跳过），导致永远读不到。

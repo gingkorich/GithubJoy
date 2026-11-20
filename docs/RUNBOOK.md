@@ -2,9 +2,9 @@
 
 | 项目 | 内容 |
 |---|---|
-| 文档版本 | 1.2（对应 REQUIREMENTS v1.2 / DESIGN v1.2） |
-| 更新日期 | 2026-11-19 |
-| 状态 | 设计与需求已定稿，**代码尚未实现**；文中命令在 M0–M5 完成后才可用，⏳ 表示该步骤行为尚未实测、完成后需回填 |
+| 文档版本 | 1.3（对应 REQUIREMENTS v1.3 / DESIGN v1.3） |
+| 更新日期 | 2026-11-20 |
+| 状态 | M1–M4c 已实现并上线（`https://gingkorich.github.io/GithubJoy/`）；本文命令均已实测（个别 ⏳ 为历史标注，可忽略）；M5 的 self-test / `-Repair` 未实现（一致性修复见 7.3） |
 | 读者 | 使用者本人、维护者、接手的 AI 代理 |
 
 > 本手册只讲「怎么做、怎么查、怎么退」。设计原因看 `DESIGN.md`，需求边界看 `REQUIREMENTS.md`。
@@ -53,7 +53,7 @@ git --version
 Test-Path .\docs             # 发布目录是否存在
 ```
 
-⏳ 实现完成后 `joy.bat` 启动时会自动做同样的检查，并把结果写进页面与 `logs/`。
+已实现并上线（2026-11-19）：`joy.bat` 启动即完成检查，结果写入页面与 `logs/`。
 
 ---
 
@@ -68,7 +68,7 @@ Test-Path .\docs             # 发布目录是否存在
 
 > 仓库公开 = `MEMORY.md`、`AGENTS.md`、`docs/*.md` 与历史提交全部公开。发布前确认没有个人信息与密钥（见第 11 节清单）。
 
-### 2.2 首次启动控制台 ⏳
+### 2.2 首次启动控制台
 
 ```powershell
 cd D:\AIproject\GithubJoy
@@ -88,7 +88,7 @@ cd D:\AIproject\GithubJoy
 2. 打开该地址，粘贴代码，授权；
 3. 页面 5 秒内显示用户名，顶部出现主页链接。
 
-若卡住不进下一步：见 6.3（这是尚未实测的 R1）。
+若卡住不进下一步：见 6.3（R1 已实测，通常 2 秒内出码）。
 
 登录完成后核对 scope（页面会显示）：
 
@@ -113,7 +113,7 @@ icacls .\llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 
 ### 2.5 确认业务配置
 
-`config.json`（不存在则从 `config.sample.json` 复制）：
+`config.json`（唯一业务配置，直接编辑即可；`config.sample.json` 已删除）：
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
@@ -148,14 +148,16 @@ scanned = added + already_unread + already_read + already_done + denied
 ### 2.7 首次阅读（先不发布）
 
 ```powershell
-.\run-joy.bat 1 -NoPublish
+.\run-joy.bat 1 -DryRun     # 先干跑：只打印将阅读的条目
+.\run-joy.bat 1 -NoWrite    # 再实跑一次：抓材料 + 调模型，但不落盘 summary
+.\run-joy.bat 1             # 确认质量后真实阅读：生成 summary（仍不发布）
 ```
 
-预期：抓 1 个项目的 README/目录树/关键文件 → 生成 summary → 生成本地 `reports\*.html`；收藏夹**不变**（`-NoPublish` 不迁移）。
+预期：抓 1 个项目的 README/目录树/关键文件 → 生成 summary；收藏夹**不变**（`run-joy.bat` 只做阅读，渲染/发布/迁移由页面「阅读」按钮或手动脚本完成）。
 
-打开页面「报告列表」检查：第一段是一段话，后面是 Q1…Qn 问答。
+需要本地看页面效果时手动渲染：`powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render.ps1 -N 1`，产物在 `reports\`。
 
-确认质量后再跑一次带发布的（或在页面点「阅读」）：发布成功后条目才会从 `unread` 移到 `read`。
+确认质量后再走完整链路（页面点「阅读」或分步跑 render/publish/migrate）：发布成功后条目才会从 `unread` 移到 `read`。
 
 ---
 
@@ -170,7 +172,7 @@ scanned = added + already_unread + already_read + already_done + denied
 
 ### 3.2 晚上：阅读
 
-在页面输入 `5` → **阅读 5 个**（与 `run-joy.bat 5` 等价）。
+在页面输入 `5` → **阅读 5 个**。注意：完整流水线（阅读→渲染→发布→迁移）只有页面按钮会自动串完；`run-joy.bat 5` 等价于其中的「阅读」一步。
 
 - 阅读源是 **GitHub `unread` List**（按 List 顺序），选中后写入本地临时队列；**阅读结束（成功或失败）队列清空**；
 - 点一次「阅读」后自动完成「渲染 → 发布 → 迁移」，不需要再点其他按钮；任一阶段失败会停在当前阶段并显示原因；
@@ -183,11 +185,17 @@ scanned = added + already_unread + already_read + already_done + denied
 
 ```powershell
 .\scan.bat                      # 扫描（与控制台互斥，同一时间只能一个）
-.\run-joy.bat 5                 # 读 5 个，发布并迁移
-.\run-joy.bat 3 -NoPublish      # 只生成页面，不动收藏夹
+.\run-joy.bat 5                 # 读 5 个并生成 summary（发布/迁移另见下两行）
+.\run-joy.bat 3 -DryRun         # 干跑：只打印将阅读的条目
 .\run-joy.bat -OnlyId owner/name          # 单条重试
-.\run-joy.bat -IdsFile ids.txt -NoPublish # 批量补读
+.\run-joy.bat -IdsFile ids.txt           # 批量补读
 .\run-joy.bat 2 -Lite           # 只读 README + 目录树（省钱）
+.\run-joy.bat -OnlyId owner/name -Lite -NoLlm -NoWrite   # 只抓材料：不调模型、不写盘
+
+# 需要无界面地走完发布与迁移（等价于页面「阅读」的后三步）：
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render.ps1 -N 3
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migrate.ps1
 ```
 
 ### 3.4 停止与状态
@@ -431,7 +439,7 @@ gh api -X PUT /user/starred/<owner>/<repo>
 单条补跑：
 
 ```powershell
-.\run-joy.bat -OnlyId owner/name -NoPublish
+.\run-joy.bat -OnlyId owner/name
 ```
 
 ### 6.8 发布失败
@@ -580,17 +588,20 @@ icacls .\llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 .\joy.bat
 ```
 
-恢复后先跑 `-Repair -DryRun`，确认「本地状态 vs 远端收藏夹」的差异符合预期。
+恢复后先跑 `.\\scan.bat -DryRun` 与页面概览核对「本地状态 vs 远端收藏夹」是否符合预期（注意：GitHub Lists 是唯一状态源，本地 data/ 丢失不影响收藏夹与已发布报告）。
 
 ### 7.3 一致性修复（推荐顺序）
 
 ```powershell
-.\run-joy.bat -Repair -DryRun     # 只打印将要做的事
-.\run-joy.bat -Repair             # 重算 List 索引 → 补 star → 补发布 → 补迁移
+# 没有 -Repair 一键开关（未实现）；各环节幂等，按现象重跑对应脚本：
+.\scan.bat                                   # List 漏写 / 漏 star：按 List 实时成员幂等补做
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render.ps1 -N 5   # 漏渲染
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish.ps1        # 漏发布
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migrate.ps1        # 漏迁移（只处理 published 且仍在 unread 的条目）
 ```
 
 - **不调用模型**、不生成新页面、不删数据；
-- 修完对照：unread 数、read 数、queue 各状态数与页面一致。
+- 修完对照：unread / read 数（页面概览或 GitHub 网页）与 `data\reports-index.json` 的 published 数。
 
 ### 7.4 回滚收藏夹（迁移错了）
 
@@ -602,16 +613,25 @@ Get-ChildItem .\data\state\lists-*.json | Sort-Object LastWriteTime -Descending 
 ```
 
 ```powershell
-.\run-joy.bat -Rollback read-20261119-203001
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migrate.ps1 -Rollback migrate-20261119-182132
 ```
 
-- 只回滚该次运行涉及、且当前状态为 `moved` 的条目；
+- 只回滚该快照涉及的、且当前仍在 `read` List 的条目（按 `data\state\lists-<runId>.json`）；
 - `published` 保持 true，不会把已发布的页面撤回；
-- 回滚后条目回到 `done`，可重新阅读或重新迁移。
+- 回滚后条目回到 unread，可重新阅读或重新迁移。
 
 ### 7.5 queue.json 看起来坏了
 
-**不要直接删 `queue.json`**（会丢失待读顺序与失败记录）。按顺序尝试：
+> 2026-11-20 口径变更：`queue.json` 只是 read 运行期的**临时工作集**（运行结束清空、DryRun/NoWrite 不落盘），不承载任何持久状态。JSON 解析失败或内容异常时**直接删除即可**：
+
+```powershell
+Remove-Item .\data\queue.json
+.\run-joy.bat 1 -DryRun     # 验证下一轮 read 能正常选中 unread 前若干条
+```
+
+- 不会丢待读顺序（在 unread List）、不会丢已读记录（在 read List 与 `data\summaries\`）、不会丢发布状态（在 `data\reports-index.json`）。
+
+<details><summary>历史做法（队列持久化时代的旧流程，已废弃）</summary>
 
 1. 从最近备份恢复 `data\queue.json`（7.2）；
 2. 无备份：先复制一份 `queue.json.broken-<时间>` 留证，再检查是否只是 JSON 语法问题（缺逗号/截断）；
@@ -627,6 +647,8 @@ Get-ChildItem .\data\state\lists-*.json | Sort-Object LastWriteTime -Descending 
 ```
 
 4. 启动服务后跑一次扫描：`nodeId` 为空的条目会在下次读取时补全，已读条目因 `already_read` 不会被重复处理。
+
+</details>
 
 ### 7.6 清理
 
@@ -701,7 +723,7 @@ gh auth status --hostname github.com     # 新机器通常需要重新登录
 6. 重新登录（页面或 `gh auth login …`），或把 `gh.json` 里的 PAT 留着兜底；
 7. 模型 Key 若换了服务商，页面重填并测试连接；
 8. `.\scan.bat -DryRun` → 正常则 `.\scan.bat`；
-9. `.\run-joy.bat 1 -NoPublish` 验证阅读链路（不写远端、不动收藏夹）。
+9. `.\run-joy.bat 1 -DryRun` → `.\run-joy.bat 1` 验证阅读链路（只写本地 summary、不动收藏夹）。
 
 > Pages 配置跟着仓库走，不需要在新机器重设；但本机 `git` 身份要重新配置（否则提交失败，见 6.8）。
 
@@ -729,7 +751,7 @@ git pull --ff-only
 .\joy.bat
 ```
 
-升级前先备份（7.1）；升级后先 `-Repair -DryRun` 看状态是否一致。
+升级前先备份（7.1）；升级后跑一次 `.\scan.bat -DryRun` 并核对页面概览与收藏夹是否一致。
 
 ### 10.4 换 GitHub 账号
 
@@ -766,7 +788,7 @@ git pull --ff-only
 
 - [ ] 做一次备份（7.1）并抽验解压
 - [ ] 检查 PAT / gh 令牌有效期
-- [ ] 看一次 `-Repair -DryRun` 输出，确认无长期不一致
+- [ ] 跑一次 `.\scan.bat -DryRun`，确认无长期不一致
 - [ ] 确认 `.gitignore` 仍覆盖 `gh.json` / `llm.json` / `data` / `reports` / `logs` / `.work`
 
 ---
@@ -783,8 +805,9 @@ git pull --ff-only
 | 扫描（干跑） | `.\scan.bat -DryRun` |
 | 扫描（小批、不 star） | `.\scan.bat -MaxAdd 5 -NoStar` |
 | 扫描 | `.\scan.bat` |
-| 读 n 个（发布 + 迁移） | `.\run-joy.bat 5` |
-| 只生成页面 | `.\run-joy.bat 3 -NoPublish` |
+| 读 n 个（生成 summary） | `.\run-joy.bat 5` |
+| 读后发布 + 迁移（无界面） | `scripts\render.ps1 -N 5` → `scripts\publish.ps1` → `scripts\migrate.ps1` |
+| 阅读干跑 | `.\run-joy.bat 3 -DryRun` |
 | 单条重试 | `.\run-joy.bat -OnlyId owner/name` |
 | 只抓材料（不调模型、不写盘） | `.\run-joy.bat -OnlyId owner/name -Lite -NoLlm -NoWrite` |
 | 调模型但不写盘 | `.\run-joy.bat -OnlyId owner/name -Lite -NoWrite` |
@@ -796,10 +819,10 @@ git pull --ff-only
 | 发布（真实推送） | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish.ps1` |
 | 迁移干跑 | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migrate.ps1 -DryRun` |
 | 回滚迁移 | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migrate.ps1 -Rollback <migrate-runId>` |
-| 批量补读 | `.\run-joy.bat -IdsFile ids.txt -NoPublish` |
+| 批量补读 | `.\run-joy.bat -IdsFile ids.txt` |
 | 省钱模式 | `.\run-joy.bat 2 -Lite` |
-| 一致性修复 | `.\run-joy.bat -Repair -DryRun` |
-| 回滚收藏夹 | `.\run-joy.bat -Rollback <RunId>` |
+| 一致性修复 | 无 `-Repair`（未实现）；按 7.3 分步重跑对应脚本 |
+| 回滚收藏夹 | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migrate.ps1 -Rollback <migrate-runId>` |
 | 查看登录 | `gh auth status --hostname github.com` |
 | 登录 / 退出 | `gh auth login …` / `gh auth logout --hostname github.com` |
 | 查端口占用 | `Get-NetTCPConnection -LocalPort 8787` |
@@ -812,12 +835,12 @@ git pull --ff-only
 | 路径 | 用途 | 是否入库 |
 |---|---|---|
 | `joy.bat` / `scan.bat` / `run-joy.bat` | 入口 | 是 |
-| `config.json` / `config.sample.json` | 业务参数 | 是（不含密钥） |
+| `config.json` | 业务参数 | 是（不含密钥） |
 | `gh.json` / `llm.json` | 凭据 | **否** |
 | `service/` / `scripts/` / `templates/` | 代码 | 是 |
-| `data/` | 队列与状态 | 否 |
-| `reports/` | 本地历史页面 | 否 |
-| `reports/*.html` | 已发布页面 | 是 |
+| `data/` | 运行期数据（queue/state/summaries/jobs；queue 为临时工作集） | 否 |
+| `reports/` | 渲染产物：`<时间戳>.html` + latest.html + index.html | **是**（发布即提交） |
+| 根 `index.html` | 归档入口页（当前手工维护） | 是 |
 | `docs/*.md` | 文档三件套 | 是 |
 | `logs/` / `.work/` | 日志与中间产物 | 否 |
 
@@ -860,3 +883,4 @@ git pull --ff-only
 | 真实迁移 | ✅ 已回填（2026-11-19）：迁移 4 条（chronytop + n3 三条），unread 60→56、read 0→4，快照 `lists-migrate-20261119-182132.json` |
 | 控制台自动流水线 | ✅ 已回填（2026-11-19）：点一次「阅读」（n=1, Lite）后自动完成 阅读→渲染→发布→迁移；unread 55→54、read 5→6，Pages 新页面 200 |
 | AC-1～AC-14 实测结果 | M2–M5 逐条 |
+| 队列架构收尾（2026-11-20）：read/publish 死代码清理、概览 stats 化 | ✅ 已回填（2026-11-20，见 MEMORY「队列架构收尾清理」）：`read.ps1 -DryRun -N 2` 通过（unread 58 选中 2、queue 零写入）、`publish.ps1 -DryRun` 通过、server/app `node --check` 通过 |

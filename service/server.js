@@ -57,12 +57,19 @@ function readJsonFile(file, fallback) {
 
 function dashboard() {
   const st = readJsonFile(path.join(DATA, 'state.json'), {}) || {};
-  const q = readJsonFile(path.join(DATA, 'queue.json'), { items: [] }) || { items: [] };
-  const counts = { pending: 0, summarizing: 0, done: 0, failed: 0, moved: 0, gone: 0 };
-  for (const it of (q.items || [])) {
-    const s = String((it && it.status) || '');
-    if (Object.prototype.hasOwnProperty.call(counts, s)) counts[s]++;
-  }
+  // queue.json is a per-run scratch mirror (empty between runs), so stats are
+  // derived from summaries and reports-index instead of queue statuses.
+  let summarized = 0;
+  try {
+    summarized = fs.readdirSync(path.join(DATA, 'summaries'))
+      .filter((f) => f.toLowerCase().endsWith('.json')).length;
+  } catch (_) { /* summaries dir missing */ }
+  let reports = 0;
+  let published = 0;
+  const idx = readJsonFile(path.join(DATA, 'reports-index.json'), []);
+  const idxArr = Array.isArray(idx) ? idx : (idx ? [idx] : []);
+  reports = idxArr.length;
+  for (const e of idxArr) { if (e && e.published) published++; }
   const ls = st.lastScan || null;
   return {
     scan: ls ? {
@@ -70,7 +77,7 @@ function dashboard() {
       totalUnreadAfter: ls.totalUnreadAfter, runId: ls.runId,
     } : null,
     read: st.lastRead || null,
-    queue: counts,
+    stats: { summarized, reports, published },
   };
 }
 
@@ -245,7 +252,7 @@ const STARTED_AT = new Date().toISOString();
 /* ------------------------------------------------------------------ */
 
 function loadConfig() {
-  for (const name of ['config.json', 'config.sample.json']) {
+  for (const name of ['config.json']) {
     try {
       const raw = fs.readFileSync(path.join(ROOT, name), 'utf8').replace(/^\uFEFF/, '');
       return JSON.parse(raw);

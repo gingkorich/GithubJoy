@@ -2,12 +2,12 @@
 
 | 项目 | 内容 |
 |---|---|
-| 文档版本 | 1.2（新增网络代理支持） |
-| 更新日期 | 2026-11-19 |
-| 状态 | v1.0 的 Q1–Q10 继续有效；v1.1 新增 FR-13 / FR-14、改写 FR-5 / FR-6、新增第 11 节；v1.2 为 FR-14 补充代理能力（实测 `github.com:443` 直连中断时必需） |
-| 对应实现 | M1 已实现（`joy.bat`、`service/`、`scripts/probe-lists.ps1`）；M2–M5 未实现 |
+| 文档版本 | 1.3（同步实际实现的开关与队列口径） |
+| 更新日期 | 2026-11-20 |
+| 状态 | v1.0 的 Q1–Q10 继续有效；v1.1 新增 FR-13 / FR-14、改写 FR-5 / FR-6、新增第 11 节；v1.2 为 FR-14 补充代理能力；v1.3 按实际实现修正干跑开关命名（`-DryRun` / `-NoWrite` 等，不存在 `-NoPublish`）、明确队列不持久化（GitHub Lists 为唯一状态源） |
+| 对应实现 | M1–M4c 已实现并上线：`joy.bat`、`scan.bat`、`run-joy.bat`、`service/`、`scripts/{scan,read,render,publish,migrate,status,probe-lists}.ps1` |
 | 依据 | `MEMORY.md`（2026-11-18 需求原文与技术核实）、`AGENTS.md`（工程约定） |
-| 相关文档 | `DESIGN.md`（实现设计，待写）、`RUNBOOK.md`（操作手册，待写） |
+| 相关文档 | `DESIGN.md`（实现设计 v1.3）、`RUNBOOK.md`（操作手册 v1.3） |
 
 > 本文回答「为什么做、做什么、做到什么算完成」，不含具体命令与实现细节。
 > 文中「已确认（2026-11-19）」标记的条目来自需求方拍板；第 10 节是完整决策记录。若 `DESIGN.md` 阶段发现某项不可行，回来改本文件并升版本。
@@ -80,15 +80,16 @@ GitHub Joy 把这件事做成一条流水线：
 | 站点所有者（单人） | 早上双击 `joy.bat` 打开控制台，点「立即扫描」；晚上在页面输入 `5` 点「阅读」，或双击 `run-joy.bat`；收藏夹自动迁移 |
 | 站点所有者（临时） | 只想补读某几个项目：`run-joy.bat -OnlyId owner/repo`，或 `-IdsFile ids.txt` |
 | 维护者 / 接手者 | 按 RUNBOOK 重建环境、更换 PAT / 模型、修复 Trending 解析、回滚收藏夹 |
-| 智能体（AI） | 按 DESIGN/RUNBOOK 分步执行；每步先 `-NoPublish` 干跑 |
+| 智能体（AI） | 按 DESIGN/RUNBOOK 分步执行；每步先 `-DryRun` / `-NoWrite` / `-NoPush` 干跑 |
 
 **典型一天**
 
 ```
 08:00  双击 joy.bat → 浏览器打开 http://127.0.0.1:8787/ → 点「立即扫描」
 08:02  页面刷新：上次扫描时间、本次新增 unread 8、累计 unread 23、报告列表
-20:30  页面输入 5 → 点「阅读 5 个」（或双击 run-joy.bat 输入 5）
-20:45  生成 reports/2026-11-19-n5.html，推送到 Pages
+20:30  页面输入 5 → 点「阅读 5 个」：自动完成阅读→渲染→发布→迁移
+       （run-joy.bat 5 只完成阅读与总结，发布/迁移需随后手动跑 render/publish/migrate）
+20:45  生成 reports/<时间戳>.html，推送到 Pages
 20:46  unread 移除 5 个，read 增加 5 个；页面统计同步更新
 ```
 
@@ -242,16 +243,16 @@ GitHub Joy 把这件事做成一条流水线：
 ### FR-7 状态迁移（unread → read）
 
 - 触发条件（已确认 2026-11-19）：**总结成功 + 页面已生成 + 发布成功**，三者齐备才迁移；发布失败时项目留在 `unread`，摘要保留，不重复计费；
-- `-NoPublish` 或 `-NoMark`：本轮不迁移，收藏夹不变；
-- **补发与补迁移**：下次正常运行时，发布阶段先补发所有 `done 且 published=false` 的条目，发布成功后连同本轮一起迁移；`-Repair` 可单独执行补发 / 补迁移；
-- 迁移步骤：从 `unread` 移除 → 加入 `read`；两步之间失败记 `pending_move`，下次补偿；
+- 不执行 publish/migrate（如只跑 `read.ps1`）时本轮不迁移，收藏夹不变；
+- **补发与补迁移**：下次正常运行时，migrate 只处理「`reports-index` 中 published 且仍在 unread List」的条目；补发重跑 `render.ps1` + `publish.ps1`，补迁移重跑 `migrate.ps1`（各环节幂等，无 `-Repair` 一键开关）；
+- 迁移步骤：单次 `updateUserListsForItem`（unread → read + 保留其它 List）；失败条目留在 unread，下次补偿；
 - 迁移前写快照 `data/state/lists-<RunId>.json`（迁移前后 unread/read 条目清单），支持 `-Rollback <RunId>`；
 - 幂等：`read` 已包含该条目时只做移除；条目不在 `unread` 时跳过并记录；
 - 单条迁移失败不影响其他条目：该条保持可重试状态，重跑只补迁移，不重复调用模型。
 
-**验收**：`-NoPublish` 运行后收藏夹不变、`reports/` 有页面、条目为 `done` 且 `published=false`；先 `-NoPublish` 再正常发布，第二次不产生新的 LLM 调用，发布后 unread 减少数 = 本次补发条目数；人为让 push 失败，收藏夹不变且退出码非 0。
+**验收**：只跑 `read.ps1` 后收藏夹不变、`data/summaries/` 有产物、`reports-index` 无新 published 条目；补发布时不产生新的 LLM 调用，发布后 unread 减少数 = 本次补发条目数；人为让 push 失败，收藏夹不变且退出码非 0。
 
-### FR-8 发布到 GitHub Pages（本仓库 `docs/`）
+### FR-8 发布到 GitHub Pages（本仓库发布目录）
 
 > 已确认（2026-11-19）：发布到**当前 `GithubJoy` 仓库**的 `docs/`、`main` 分支；仓库需设为 **public**（免费账号的 Pages 要求）。
 
@@ -261,12 +262,12 @@ GitHub Joy 把这件事做成一条流水线：
 - 只提交生成的页面：`git add` 明确列出 `docs/*.html` 与 `docs/.nojekyll`，**禁止 `git add -A`**；`data/`、`reports/`、`.work/`、`gh.json`、`llm.json` 永不提交；
 - 推送前检查：工作区存在与本轮无关的未提交改动时提示用户，不自动 stash / commit；
 - 推送流程：`git fetch` → 检查本地与远端是否分叉（分叉即中止并提示手动处理）→ 提交（`joy: 2026-11-19 n=5`）→ `git push`；
-- `-NoPublish`：只在 `reports/` 生成本地文件，不复制到 `docs/`、不提交、不推送；
+- `publish.ps1 -DryRun`：只列出将发布的文件；`-NoPush`：本地提交但不推送；两者都不标 published、不触发迁移；
 - 常见错误要给出修复建议：仓库仍为私有 / Pages 未开启 / 分支保护 / 无写权限 / 远端分叉；
 - 发布失败：本地页面保留、**不做迁移**（见 FR-7），退出码非 0，并在页面顶部标注「未发布」；
 - **公开风险**：仓库设为 public 后，`MEMORY.md`、`AGENTS.md`、`docs/*.md` 及全部历史提交都会公开；发布前须确认这些文件不含个人信息与密钥（`gh.json`、`llm.json` 必须在 `.gitignore` 中，历史提交里也不得出现过）。
 
-**验收**：`-NoPublish` 不产生任何 `docs/` 变更、无提交；正常发布后 `https://<login>.github.io/GithubJoy/` 可访问且与 `reports/` 内容一致；`git show --stat` 只包含 `docs/` 下的 HTML 与 `.nojekyll`；用无写权限的 token 运行，错误信息包含具体原因而不是只说 403。
+**验收**：`publish.ps1 -DryRun` / `-NoPush` 不产生远端变更；正常发布后 `https://<login>.github.io/GithubJoy/` 可访问且与 `reports/` 内容一致；`git show --stat` 只包含发布目录下的 HTML 与 `.nojekyll`；用无写权限的 token 运行，错误信息包含具体原因而不是只说 403。
 
 ### FR-9 触发方式（本期不做调度）
 
@@ -275,7 +276,7 @@ GitHub Joy 把这件事做成一条流水线：
 - 三个入口：
   - `joy.bat`：**主入口**，启动本地控制台（FR-13）；页面上的「立即扫描」「阅读 n 个」与下两个 bat 等价；
   - `scan.bat`：无界面扫描，供排障或批处理使用；
-  - `run-joy.bat`：无界面阅读，支持 `-OnlyId` / `-IdsFile` / `-NoPublish` 等参数（见 FR-4）；
+  - `run-joy.bat`：无界面阅读（透传 `read.ps1` 的 `-N` / `-OnlyId` / `-IdsFile` / `-Lite` / `-DryRun` / `-NoWrite` / `-NoLlm` / `-Force`，见 FR-4）；
 - bat 只是薄封装：检查 Node / `gh` / `gh.json` / `llm.json` 与 PowerShell 执行策略 → 调 `.ps1` 或 Node → 透传退出码；
 - 并发控制：扫描（无论来自控制台还是 `scan.bat`）共用一把文件锁，同一时间只允许一个实例，第二个提示后退出；
 - 日志：`logs/scan-<yyyy-MM-dd>.log`、`logs/read-<yyyyMMdd-HHmmss>.log`，控制台任务日志同时可在线查看；
@@ -290,7 +291,7 @@ GitHub Joy 把这件事做成一条流水线：
 |---|---|---|
 | `gh.json` | `token`（未用 gh 登录时的兜底 PAT）、`login`、`unread_list`、`read_list`、`publish{repo,branch,dir,base_url}` | 否（已 gitignore） |
 | `llm.json` | `base_url`、`api_key`、`model`、`timeout_sec`、`max_retries`、`temperature`（可选）；可由控制台读写 | 否 |
-| `config.json` | `max_n`、`readme_max_chars`、`tree_max_entries`、`key_files_max`、`deep_mode`、`period_priority`、`star_on_add`、`max_stars_per_scan`、`denylist`、`retention`、`schedule` | 是（提供 `config.sample.json`） |
+| `config.json` | `network`、`search`（含 `minStars/quota/starFilter` 等）、`queue.denylist`、`star` 限流、`read` 深度与截断参数 | 是（唯一业务配置，`config.sample.json` 已删除；模型参数在 `llm.json`） |
 | `data/service-token` | 控制台写操作令牌（每次启动重新生成） | 否（运行时，仅本机） |
 
 - 配置缺失/字段非法时立即报错并指出缺哪个字段，不产生半成品；
@@ -395,8 +396,8 @@ GitHub Joy 把这件事做成一条流水线：
 | 阅读深度 | deep（默认，含 3–5 个关键文件） | `-Lite` / `config.deep_mode=false` 降级为 README + 目录树 |
 | 是否 star | 是（默认 star） | 加入 unread 即 star；`-NoStar` / `config.star_on_add=false` 关闭 |
 | List 名称 | `unread` / `read` | 可配置，缺失自动创建 |
-| 输出 | HTML only | 本地 `reports/`，发布时复制到 `docs/`（见 FR-8） |
-| 迁移时机 | 发布成功之后 | `-NoPublish` / `-NoMark` 不迁移；未发布条目下次补发 |
+| 输出 | HTML only | 本地 `reports/`，发布即提交该目录（配置 `gh.json.publish.dir`，本机为 `reports/`，见 FR-8） |
+| 迁移时机 | 发布成功之后 | 只跑 read（不跑 publish/migrate）不迁移；未发布条目重跑对应脚本补做 |
 | 保留策略 | `.work/` 90 天，`reports/` 永久 | 已确认（2026-11-19） |
 | 重试次数 | HTTP ≤6（指数退避）；LLM ≤3 | 401/403/404 不重试 |
 
@@ -430,8 +431,8 @@ GitHub Joy 把这件事做成一条流水线：
 | AC-5 | 阅读顺序 | `run-joy.bat 3` 处理 unread List 前 3 个（List 顺序），与页面「待读」一致 |
 | AC-6 | 总结质量 | 每条含全部固定字段；提到的文件均存在于 `sources`；无 README 时注明推断依据 |
 | AC-7 | 页面可用 | 断网可打开、深色/打印/移动端正常、无乱码、无残留 Markdown 标记、注入文本被转义 |
-| AC-8 | 状态迁移 | 发布成功后 unread 减少数 = read 增加数 = 本次发布成功数；`-NoPublish` / `-NoMark` 时收藏夹不变 |
-| AC-9 | 发布 | Pages 地址可访问且与本地一致；`-NoPublish` 无远端变更 |
+| AC-8 | 状态迁移 | 发布成功后 unread 减少数 = read 增加数 = 本次发布成功数；只跑 `read.ps1`（不执行 render/publish/migrate）时收藏夹不变 |
+| AC-9 | 发布 | Pages 地址可访问且与本地一致；`publish.ps1 -DryRun` / `-NoPush` 无远端变更 |
 | AC-10 | 故障恢复 | 中断后重跑不重复计费；404/403/429 的错误信息包含具体原因与修复建议 |
 | AC-11 | 控制台可用 | 双击 `joy.bat` 10 秒内打开；扫描后 2 秒内更新「上次扫描时间 / 新增 / 累计」；报告列表可点开；关闭窗口后端口释放 |
 | AC-12 | 账号与密钥 | 未登录 → 设备码登录 → 显示用户名 → 退出恢复；API Key 保存后仅显示掩码；页面与日志无原文 |
@@ -548,3 +549,4 @@ GitHub Joy 把这件事做成一条流水线：
 | 2026-11-19 | 1.0 | 确认 Q1–Q10：GraphQL Lists、默认 star、仅 Search API、本仓库 `docs/`、本期不调度、n 上限 20/默认 5/永久保留、默认 deep、不引入 Playwright、FIFO、发布成功才迁移；同步改写 FR-1 / FR-7 / FR-8 / FR-9 |
 | 2026-11-19 | 1.1 | 需求变更：新增本地控制台 FR-13（Node 标准库服务、127.0.0.1、令牌与 Host 校验）、GitHub CLI 集成 FR-14；改写 FR-5（overview + Q&A）与 FR-6（卡片顺序）；新增第 11 节账号风险与合规评估；补充 Q11–Q14 |
 | 2026-11-19 | 1.2 | 代理支持：FR-14 增加代理配置与自动探测；第 9 节记录「gh 不读系统代理」约束；实测 `github.com:443` 直连超时、代理 200 |
+| 2026-11-20 | 1.3 | 按实际实现同步文档：干跑开关统一为实际存在的 `-DryRun` / `-NoWrite` / `-NoLlm` / `-NoPush` / `-NoStar`（`-NoPublish` / `-NoMark` / `-Repair` 未实现，文中移除）；明确队列不跨轮持久化、GitHub Lists 为唯一状态源；`run-joy.bat` 只做阅读（发布/迁移由控制台流水线或手动脚本完成）；概览统计改由 summaries / reports-index 派生 |

@@ -57,7 +57,7 @@ function renderStatus(s) {
     setText('lastAdded', '—');
   }
   setText('unreadCount', s.unread ? s.unread.count : '—');
-  setText('readPending', s.unread ? s.unread.count : '—');
+  setText('readPending', (s.readCount === null || s.readCount === undefined) ? '—' : s.readCount);
 
   const rd = s.read;
   if (rd) {
