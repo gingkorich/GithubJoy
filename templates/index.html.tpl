@@ -30,7 +30,7 @@ a{color:var(--accent)}
 </header>
 <main>
 <table>
-<thead><tr><th>报告</th><th>项目</th><th>Q&amp;A</th><th>生成时间</th><th>状态</th></tr></thead>
+<thead><tr><th>报告</th><th>项目</th><th>生成时间</th></tr></thead>
 <tbody>
 {{ROWS}}
 </tbody>

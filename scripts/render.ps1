@@ -265,11 +265,9 @@ if (-not $NoIndex) {
   foreach ($e in $sorted) {
     $when = [string]$e.createdAt
     try { $when = ([datetime]$e.createdAt).ToLocalTime().ToString('yyyy-MM-dd HH:mm') } catch { }
-    $statusText = $L.unpublished
-    if ($e.published) { $statusText = $L.published }
     [void]$rows.Append('<tr><td><a href="' + (ConvertTo-JoyHtml ([string]$e.file)) + '">' + (ConvertTo-JoyHtml ([string]$e.file)) + '</a></td>')
-    [void]$rows.Append('<td>' + [int]$e.count + '</td><td>' + [int]$e.qa + '</td>')
-    [void]$rows.Append('<td>' + (ConvertTo-JoyHtml $when) + '</td><td class="muted">' + $statusText + '</td></tr>')
+    [void]$rows.Append('<td>' + [int]$e.count + '</td>')
+    [void]$rows.Append('<td>' + (ConvertTo-JoyHtml $when) + '</td></tr>')
   }
 
   $idxTpl = [IO.File]::ReadAllText((Join-Path $root 'templates\index.html.tpl'), [Text.Encoding]::UTF8)
