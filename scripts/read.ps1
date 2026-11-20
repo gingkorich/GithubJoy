@@ -10,7 +10,8 @@ param(
   [switch]$NoWrite,
   [switch]$NoLlm,
   [string]$JsonOut = '',
-  [string]$LogFile = ''
+  [string]$LogFile = '',
+  [int]$ItemWarnSec = 300
 )
 
 $ErrorActionPreference = 'Stop'
@@ -456,6 +457,9 @@ foreach ($item in $wanted) {
     continue
   }
 
+  $itemStart = Get-Date
+  Write-JoyLog ("start {0} ({1}/{2})" -f $full, $idx, $wanted.Count)
+
   $entry = [ordered]@{
     id = $item.id; status = ''; summaryPath = $null
     overviewChars = 0; qaCount = 0
@@ -505,7 +509,8 @@ foreach ($item in $wanted) {
       $paths = @($tree.paths)
       $treeText = ($paths -join "`n")
     } else {
-      $warnings += ('tree_failed (HTTP ' + $tree.status + ')')
+      $why = if ([string]$tree.error -eq 'tree_json_parse_failed') { 'tree_json_parse_failed' } else { 'HTTP ' + $tree.status }
+      $warnings += ('tree_failed (' + $why + ')')
     }
 
     $keyPaths = @()
@@ -622,7 +627,11 @@ foreach ($item in $wanted) {
     $itemsOut += $entry
     $script:Result.succeeded++
 
-    Write-JoyLog ("done {0}: overview={1} chars, qa={2}, warnings={3}" -f $full, $entry.overviewChars, $entry.qaCount, $warnings.Count)
+    $itemSec = [int]((Get-Date) - $itemStart).TotalSeconds
+    Write-JoyLog ("done {0}: overview={1} chars, qa={2}, warnings={3}, elapsed={4}s" -f $full, $entry.overviewChars, $entry.qaCount, $warnings.Count, $itemSec)
+    if ($itemSec -ge $ItemWarnSec) {
+      Write-JoyLog ("SLOW {0}: {1}s >= {2}s (possible sleep/network stall)" -f $full, $itemSec, $ItemWarnSec) 'WARN'
+    }
     if ($NoWrite) { Write-JoyLog ('noWrite preview overview: ' + ([string]$final.overview)) }
     Write-JoyEvent @{ evt = 'progress'; phase = 'item'; done = $idx; total = $wanted.Count }
   } catch {
