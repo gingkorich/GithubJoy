@@ -97,7 +97,6 @@ function Get-InitialState {
     version = 1
     lastScan = $null
     lastRead = $null
-    unreadTotal = [pscustomobject]@{ count = 0; refreshedAt = $null }
     starCounters = [pscustomobject]@{ day = (Get-Date).ToString('yyyy-MM-dd'); count = 0 }
   }
 }
@@ -682,7 +681,6 @@ $state.lastScan = [pscustomobject][ordered]@{
   skipped = $skipped
   totalUnreadAfter = $totalUnreadAfter
 }
-$state.unreadTotal = [pscustomobject][ordered]@{ count = $totalUnreadAfter; refreshedAt = (New-IsoNow) }
 $state.starCounters = [pscustomobject][ordered]@{ day = $today; count = $dayCount }
 
 $statePath = Get-StatePath

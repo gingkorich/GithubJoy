@@ -263,19 +263,6 @@ foreach ($it in $todo) {
 }
 
 $script:Result.items = $itemsOut
-if (-not $DryRun) {
-  $st = Read-JoyJsonFile (Get-StatePath)
-  if (-not $st) { $st = [pscustomobject]@{ version = 1 } }
-  $base = [int]$unread.itemCount
-  if ($base -le 0 -and $st.PSObject.Properties.Name -contains 'unreadTotal' -and $st.unreadTotal) {
-    $base = [int]$st.unreadTotal.count
-  }
-  $left = [Math]::Max(0, $base - $script:Result.moved)
-  $ut = [ordered]@{ count = $left; refreshedAt = (New-IsoNow) }
-  $st | Add-Member -NotePropertyName unreadTotal -NotePropertyValue $ut -Force
-  Write-JoyJsonFile (Get-StatePath) $st
-  Write-JoyLog ("state.unreadTotal updated to {0}" -f $left)
-}
 
 $script:Result.ok = ($script:Result.failed -eq 0)
 if (-not $script:Result.ok) { Save-ResultAndExit 5 }

@@ -183,13 +183,6 @@ $script:Result.unreadTotal = $listItems.Count
 $script:Result.selectionSource = 'unread-list'
 Write-JoyLog ("unread List has {0} item(s)" -f $listItems.Count)
 
-if (-not $DryRun) {
-  $st = Read-JoyJsonFile (Get-StatePath)
-  if (-not $st) { $st = [pscustomobject]@{ version = 1 } }
-  $ut = [ordered]@{ count = $listItems.Count; refreshedAt = (New-IsoNow) }
-  $st | Add-Member -NotePropertyName unreadTotal -NotePropertyValue $ut -Force
-  Write-JoyJsonFile (Get-StatePath) $st
-}
 
 $queueIndex = @{}
 foreach ($q in $queue.items) { if ($q.id) { $queueIndex[([string]$q.id).ToLowerInvariant()] = $q } }

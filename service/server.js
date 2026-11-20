@@ -70,9 +70,37 @@ function dashboard() {
       totalUnreadAfter: ls.totalUnreadAfter, runId: ls.runId,
     } : null,
     read: st.lastRead || null,
-    unread: st.unreadTotal || null,
     queue: counts,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* lists status (GitHub is the source of truth)                        */
+/* ------------------------------------------------------------------ */
+
+const listsCache = { at: 0, value: null, pending: null };
+
+async function listsStatus() {
+  const now = Date.now();
+  if (listsCache.value && now - listsCache.at < 30000) return listsCache.value;
+  if (listsCache.pending) return listsCache.pending;
+
+  listsCache.pending = (async () => {
+    const r = await run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass',
+      '-File', path.join(ROOT, 'scripts', 'status.ps1')], 45000);
+    let value = null;
+    try {
+      value = JSON.parse((r.stdout || '').trim());
+    } catch (_) {
+      value = { ok: false, error: 'status_probe_failed: ' + ((r.stderr || r.error || '').trim().slice(0, 200)) };
+    }
+    listsCache.value = value;
+    listsCache.at = Date.now();
+    listsCache.pending = null;
+    return value;
+  })();
+
+  return listsCache.pending;
 }
 
 /* ------------------------------------------------------------------ */
@@ -535,7 +563,7 @@ async function startLogin() {
         job.hintText = 'GitHub 直连失败：请在 config.json 的 network.proxy 填写代理（如 http://127.0.0.1:10808），或确认系统代理已开启（见 RUNBOOK 6.11）。';
       }
     }
-    statusCache.value = null;
+    statusCache.value = null; listsCache.value = null; listsCache.at = 0;
     persistJob();
   });
 
@@ -606,7 +634,7 @@ async function startScan(dryRun) {
     }
     if (code !== 0 && !job.error) job.error = 'exit_' + code;
     job.state = (code === 0 && !(res && res.ok === false)) ? 'succeeded' : 'failed';
-    statusCache.value = null;
+    statusCache.value = null; listsCache.value = null; listsCache.at = 0;
     persistJob();
   });
 
@@ -665,7 +693,7 @@ async function startRead(opts) {
     }
     if (code !== 0 && !job.error) job.error = 'exit_' + code;
     job.state = (code === 0 && !(res && res.ok === false)) ? 'succeeded' : 'failed';
-    statusCache.value = null;
+    statusCache.value = null; listsCache.value = null; listsCache.at = 0;
     persistJob();
     advancePipeline(job, res).catch((e) => {
       console.log('[joy] pipeline error: ' + (e && e.message ? e.message : e));
@@ -721,7 +749,7 @@ async function startScriptJob(kind, scriptName, scriptArgs, timeoutMs, options) 
     }
     if (code !== 0 && !job.error) job.error = 'exit_' + code;
     job.state = (code === 0 && !(res && res.ok === false)) ? 'succeeded' : 'failed';
-    statusCache.value = null;
+    statusCache.value = null; listsCache.value = null; listsCache.at = 0;
     persistJob();
     advancePipeline(job, res).catch((e) => {
       console.log('[joy] pipeline error: ' + (e && e.message ? e.message : e));
@@ -829,6 +857,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && (p === '/app.js' || p === '/style.css')) return serveStatic(res, p.slice(1));
 
     if (p === '/api/status' && req.method === 'GET') {
+      const lists = await listsStatus();
       return sendJson(res, 200, {
         service: {
           version: VERSION, port: ACTUAL_PORT, startedAt: STARTED_AT,
@@ -840,6 +869,11 @@ const server = http.createServer(async (req, res) => {
           return { proxy: d.proxy, source: d.source, autoDetect: !!NET.autoDetect };
         })(),
         ...dashboard(),
+        unread: (lists && lists.ok && lists.unread)
+          ? { count: lists.unread.count, refreshedAt: lists.at, source: 'github' }
+          : null,
+        readCount: (lists && lists.read) ? lists.read.count : null,
+        lists: lists || null,
         llm: llmView(),
         pipeline: pipelineView(),
         job: jobView(job, 50),
@@ -955,7 +989,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/gh/logout' && req.method === 'POST') {
       const r = await run('gh', ['auth', 'logout', '--hostname', 'github.com'], 20000);
-      statusCache.value = null;
+      statusCache.value = null; listsCache.value = null; listsCache.at = 0;
       if (r.code !== 0) {
         return sendJson(res, 500, { error: (r.stderr || r.stdout || 'logout_failed').trim() });
       }
