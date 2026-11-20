@@ -78,11 +78,10 @@ function dashboard() {
 
 const listsCache = { at: 0, value: null, pending: null };
 
-async function listsStatus() {
-  const now = Date.now();
-  if (listsCache.value && now - listsCache.at < 30000) return listsCache.value;
-  if (listsCache.pending) return listsCache.pending;
+const LISTS_TTL_MS = 60 * 1000;   // background refresh interval for lists stats
 
+function refreshLists() {
+  if (listsCache.pending) return listsCache.pending;
   listsCache.pending = (async () => {
     const r = await run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass',
       '-File', path.join(ROOT, 'scripts', 'status.ps1')], 45000);
@@ -96,9 +95,40 @@ async function listsStatus() {
     listsCache.at = Date.now();
     listsCache.pending = null;
     return value;
-  })();
-
+  })().catch((e) => {
+    listsCache.pending = null;
+    return { ok: false, error: 'status_probe_failed: ' + String((e && e.message) || e) };
+  });
   return listsCache.pending;
+}
+
+/*
+ * Request-facing accessor: never blocks polling after the first load.
+ * - fresh cache  -> return immediately
+ * - first load   -> wait for the probe (once, so the first page render is correct)
+ * - stale cache  -> serve stale value now, kick a background refresh
+ */
+async function listsStatus() {
+  const now = Date.now();
+  if (listsCache.value && now - listsCache.at < LISTS_TTL_MS) return listsCache.value;
+  if (!listsCache.value) return refreshLists();
+  refreshLists().catch(() => {});
+  return listsCache.value;
+}
+
+/* Mark cache stale and refresh in the background (after jobs that touched GitHub). */
+function invalidateLists() {
+  listsCache.at = 0;
+  refreshLists().catch(() => {});
+}
+
+/* Timer entry: skip the PowerShell probe when we know gh is logged out. */
+async function refreshListsIfLoggedIn() {
+  try {
+    const g = statusCache.value || (await ghStatus());
+    if (!g || !g.auth) return;
+  } catch (_) { return; }
+  refreshLists().catch(() => {});
 }
 
 /* ------------------------------------------------------------------ */
@@ -486,7 +516,8 @@ function childEnv(extra) {
 /* gh helpers                                                          */
 /* ------------------------------------------------------------------ */
 
-const statusCache = { at: 0, value: null };
+const statusCache = { at: 0, value: null, pending: null };
+const GH_TTL_MS = 60 * 1000;
 
 function run(cmd, argv, timeoutMs, extraEnv) {
   return new Promise((resolve) => {
@@ -504,51 +535,76 @@ function run(cmd, argv, timeoutMs, extraEnv) {
   });
 }
 
+function refreshGh() {
+  if (statusCache.pending) return statusCache.pending;
+  statusCache.pending = (async () => {
+    const found = await run('where', ['gh'], 5000);
+    const installed = found.code === 0 && found.stdout.trim().length > 0;
+    let version = null;
+    if (installed) {
+      const v = await run('gh', ['--version'], 8000);
+      const m = (v.stdout || '').match(/gh version\s+([^\s]+)/i);
+      version = m ? m[1] : null;
+    }
+
+    const out = {
+      installed, version, auth: false, login: null, scopes: null, tokenSource: 'none', error: null,
+    };
+
+    if (!installed) {
+      out.error = 'gh_not_installed';
+    } else {
+      const s = await run('gh', ['auth', 'status', '--hostname', 'github.com', '--json', 'hosts'], 12000);
+      if (s.code === 0) {
+        try {
+          const obj = JSON.parse(s.stdout);
+          const hosts = obj.hosts && obj.hosts['github.com'];
+          const entry = Array.isArray(hosts) ? (hosts.find((h) => h.active) || hosts[0]) : null;
+          if (entry) {
+            out.auth = entry.state === 'success';
+            out.login = entry.login || null;
+            out.scopes = entry.scopes || null;
+            out.tokenSource = entry.tokenSource || 'gh';
+          }
+        } catch (e) {
+          out.error = 'gh_status_parse_failed: ' + e.message;
+        }
+      } else {
+        // exit 1 + "not logged in" is a normal state, not an error
+        const msg = (s.stderr || s.stdout || '').trim();
+        out.error = /not logged|not authenticated/i.test(msg) ? null : (msg || 'gh_status_failed');
+      }
+    }
+
+    statusCache.at = Date.now();
+    statusCache.value = out;
+    statusCache.pending = null;
+    return out;
+  })().catch((e) => {
+    statusCache.pending = null;
+    return { installed: false, version: null, auth: false, login: null, scopes: null, tokenSource: 'none',
+      error: 'gh_status_failed: ' + String((e && e.message) || e) };
+  });
+  return statusCache.pending;
+}
+
+/*
+ * Request-facing accessor, same pattern as listsStatus():
+ * fresh -> immediate; first load -> await probe once; stale -> serve stale,
+ * refresh in background (never blocks the 3s polling).
+ */
 async function ghStatus() {
   const now = Date.now();
-  if (statusCache.value && now - statusCache.at < 5000) return statusCache.value;
+  if (statusCache.value && now - statusCache.at < GH_TTL_MS) return statusCache.value;
+  if (!statusCache.value) return refreshGh();
+  refreshGh().catch(() => {});
+  return statusCache.value;
+}
 
-  const found = await run('where', ['gh'], 5000);
-  const installed = found.code === 0 && found.stdout.trim().length > 0;
-  let version = null;
-  if (installed) {
-    const v = await run('gh', ['--version'], 8000);
-    const m = (v.stdout || '').match(/gh version\s+([^\s]+)/i);
-    version = m ? m[1] : null;
-  }
-
-  const out = {
-    installed, version, auth: false, login: null, scopes: null, tokenSource: 'none', error: null,
-  };
-
-  if (!installed) {
-    out.error = 'gh_not_installed';
-  } else {
-    const s = await run('gh', ['auth', 'status', '--hostname', 'github.com', '--json', 'hosts'], 12000);
-    if (s.code === 0) {
-      try {
-        const obj = JSON.parse(s.stdout);
-        const hosts = obj.hosts && obj.hosts['github.com'];
-        const entry = Array.isArray(hosts) ? (hosts.find((h) => h.active) || hosts[0]) : null;
-        if (entry) {
-          out.auth = entry.state === 'success';
-          out.login = entry.login || null;
-          out.scopes = entry.scopes || null;
-          out.tokenSource = entry.tokenSource || 'gh';
-        }
-      } catch (e) {
-        out.error = 'gh_status_parse_failed: ' + e.message;
-      }
-    } else {
-      // exit 1 + "not logged in" is a normal state, not an error
-      const msg = (s.stderr || s.stdout || '').trim();
-      out.error = /not logged|not authenticated/i.test(msg) ? null : (msg || 'gh_status_failed');
-    }
-  }
-
-  statusCache.at = now;
-  statusCache.value = out;
-  return out;
+/* Mark gh status stale and refresh in background (login/logout/job completion). */
+function invalidateGh() {
+  statusCache.at = 0;
+  refreshGh().catch(() => {});
 }
 
 async function ghListsProbe() {
@@ -734,7 +790,7 @@ async function startLogin() {
         job.hintText = 'GitHub 直连失败：请在 config.json 的 network.proxy 填写代理（如 http://127.0.0.1:10808），或确认系统代理已开启（见 RUNBOOK 6.11）。';
       }
     }
-    statusCache.value = null; listsCache.value = null; listsCache.at = 0;
+    invalidateGh(); invalidateLists();
     persistJob();
   });
 
@@ -806,7 +862,7 @@ async function startScan(dryRun) {
     if (code !== 0 && !job.error) job.error = 'exit_' + code;
     job.state = (code === 0 && !(res && res.ok === false)) ? 'succeeded' : 'failed';
     if (job.state === 'succeeded' && !dryRun) runCleanup();
-    statusCache.value = null; listsCache.value = null; listsCache.at = 0;
+    invalidateGh(); invalidateLists();
     persistJob();
   });
 
@@ -865,7 +921,7 @@ async function startRead(opts) {
     }
     if (code !== 0 && !job.error) job.error = 'exit_' + code;
     job.state = (code === 0 && !(res && res.ok === false)) ? 'succeeded' : 'failed';
-    statusCache.value = null; listsCache.value = null; listsCache.at = 0;
+    invalidateGh(); invalidateLists();
     persistJob();
     advancePipeline(job, res).catch((e) => {
       console.log('[joy] pipeline error: ' + (e && e.message ? e.message : e));
@@ -926,7 +982,7 @@ async function startScriptJob(kind, scriptName, scriptArgs, timeoutMs, options) 
     if (job.kind === 'read' && job.state === 'failed' && res && res.succeeded > 0) {
       job.state = 'partial';
     }
-    statusCache.value = null; listsCache.value = null; listsCache.at = 0;
+    invalidateGh(); invalidateLists();
     persistJob();
     advancePipeline(job, res).catch((e) => {
       console.log('[joy] pipeline error: ' + (e && e.message ? e.message : e));
@@ -1166,7 +1222,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/gh/logout' && req.method === 'POST') {
       const r = await run('gh', ['auth', 'logout', '--hostname', 'github.com'], 20000);
-      statusCache.value = null; listsCache.value = null; listsCache.at = 0;
+      invalidateGh(); invalidateLists();
       if (r.code !== 0) {
         return sendJson(res, 500, { error: (r.stderr || r.stdout || 'logout_failed').trim() });
       }
@@ -1192,6 +1248,16 @@ const server = http.createServer(async (req, res) => {
 /* ------------------------------------------------------------------ */
 /* lifecycle                                                           */
 /* ------------------------------------------------------------------ */
+
+/* Background refresh: keeps /api/status polling free of gh/PowerShell spawns.
+ * Runs every 60s; gh status always refreshed, lists probe skipped when logged out. */
+setInterval(() => {
+  refreshGh().catch(() => {});
+  const g = statusCache.value;
+  if (g && !g.auth) return;
+  if (g && g.auth) { refreshLists().catch(() => {}); return; }
+  refreshListsIfLoggedIn().catch(() => {});
+}, 60000);
 
 process.on('SIGINT', () => {
   if (job && job.state === 'running' && job.pid) {

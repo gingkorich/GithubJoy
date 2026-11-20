@@ -7,6 +7,7 @@ param(
   [int]$LogDays = 0,
   [int]$TrendingDays = 0,
   [int]$KeepJobs = 0,
+  [int]$MaterialDays = 0,
   [string]$JsonOut = '',
   [string]$LogFile = ''
 )
@@ -25,6 +26,7 @@ $dataDir = Join-Path $root 'data'
 $jobsDir = Join-Path $dataDir 'jobs'
 $logsDir = Join-Path $root 'logs'
 $workDir = Join-Path $root '.work'
+$matDir = Join-Path $dataDir 'materials'
 
 if (-not $LogFile) { $LogFile = Join-Path $root ('logs\cleanup-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log') }
 Initialize-JoyLog $LogFile
@@ -32,22 +34,24 @@ Write-JoyLog ("cleanup start (dryRun={0})" -f [bool]$DryRun)
 
 # config defaults (config.json retention section overrides)
 $cfg = Get-JoyConfig
-$cJobDays = 30; $cLogDays = 90; $cTrendDays = 90; $cKeepJobs = 20
+$cJobDays = 30; $cLogDays = 90; $cTrendDays = 90; $cKeepJobs = 20; $cMatDays = 30
 if ($cfg -and $cfg.PSObject.Properties.Name -contains 'retention') {
   $rt = $cfg.retention
   if ($rt.PSObject.Properties.Name -contains 'jobDays') { $cJobDays = [int]$rt.jobDays }
   if ($rt.PSObject.Properties.Name -contains 'logDays') { $cLogDays = [int]$rt.logDays }
   if ($rt.PSObject.Properties.Name -contains 'trendingDays') { $cTrendDays = [int]$rt.trendingDays }
   if ($rt.PSObject.Properties.Name -contains 'keepJobs') { $cKeepJobs = [int]$rt.keepJobs }
+  if ($rt.PSObject.Properties.Name -contains 'materialDays') { $cMatDays = [int]$rt.materialDays }
 }
 if ($JobDays -gt 0) { $cJobDays = $JobDays }
 if ($LogDays -gt 0) { $cLogDays = $LogDays }
 if ($TrendingDays -gt 0) { $cTrendDays = $TrendingDays }
 if ($KeepJobs -gt 0) { $cKeepJobs = $KeepJobs }
+if ($MaterialDays -gt 0) { $cMatDays = $MaterialDays }
 
 $script:Result = [ordered]@{
   ok = $true; dryRun = [bool]$DryRun
-  deleted = [ordered]@{ jobs = 0; ids = 0; logs = 0; trending = 0; work = 0; debug = 0 }
+  deleted = [ordered]@{ jobs = 0; ids = 0; logs = 0; trending = 0; work = 0; debug = 0; materials = 0 }
   bytes = 0; error = $null
 }
 
@@ -116,11 +120,21 @@ foreach ($pattern in @('dry*.json', 'scan-real*.json', 'queue.before-clear-*.jso
   }
 }
 
+# 6) materials cache: older than materialDays (read-side TTL is 24h anyway,
+#    older copies are dead weight)
+if (Test-Path -LiteralPath $matDir) {
+  foreach ($f in @(Get-ChildItem -LiteralPath $matDir -File -ErrorAction SilentlyContinue |
+      Where-Object { ($now - $_.LastWriteTime).TotalDays -ge $cMatDays })) {
+    if (Remove-JoyFile $f.FullName) { $script:Result.deleted.materials++ }
+  }
+}
+
 $total = $script:Result.deleted.jobs + $script:Result.deleted.ids + $script:Result.deleted.logs +
-  $script:Result.deleted.trending + $script:Result.deleted.work + $script:Result.deleted.debug
-Write-JoyLog ("summary: removed {0} file(s), {1} bytes (jobs={2}, ids={3}, logs={4}, trending={5}, work={6}, debug={7})" -f `
+  $script:Result.deleted.trending + $script:Result.deleted.work + $script:Result.deleted.debug +
+  $script:Result.deleted.materials
+Write-JoyLog ("summary: removed {0} file(s), {1} bytes (jobs={2}, ids={3}, logs={4}, trending={5}, work={6}, debug={7}, materials={8})" -f `
   $total, $script:Result.bytes, $script:Result.deleted.jobs, $script:Result.deleted.ids, $script:Result.deleted.logs, `
-  $script:Result.deleted.trending, $script:Result.deleted.work, $script:Result.deleted.debug)
+  $script:Result.deleted.trending, $script:Result.deleted.work, $script:Result.deleted.debug, $script:Result.deleted.materials)
 
 if ($JsonOut) {
   $script:Result | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $JsonOut -Encoding UTF8

@@ -44,7 +44,6 @@ a{color:var(--accent)}
 </header>
 <main>
 {{CARDS}}
-<section class="failed">{{FAILED}}</section>
 </main>
 <footer>{{FOOTER}}</footer>
 </body>

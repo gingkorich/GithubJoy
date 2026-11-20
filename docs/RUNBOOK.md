@@ -142,7 +142,7 @@ icacls .\llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 预期统计满足：
 
 ```
-scanned = added + already_unread + already_read + already_done + denied
+scanned = added + already_unread + already_read + denied
 ```
 
 ### 2.7 首次阅读（先不发布）
@@ -666,6 +666,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\cleanup.ps1       
 | `data\jobs\*.json` / `ids-*.txt` | 超过最新 `keepJobs` 个或早于 `jobDays` 天 | 20 个 / 30 天 |
 | `logs\*.log`（含 `.out`/`.err`） | 早于 `logDays` 天 | 90 天 |
 | `data\trending-*.json` | 早于 `trendingDays` 天 | 90 天 |
+| `data\materials\*.json` | 早于 `materialDays` 天（read 侧缓存 TTL 为 24 小时，超期文件只是死重） | 30 天 |
 | `.work\` 临时文件 | 早于 `jobDays` 天 | 30 天 |
 | `data\dry*.json`、`scan-real*.json`、`queue.before-clear-*.json`、`last-llm-raw.txt` | 一次性调试产物，**总是删除** | — |
 
@@ -894,5 +895,7 @@ git pull --ff-only
 | 控制台自动流水线 | ✅ 已回填（2026-11-19）：点一次「阅读」（n=1, Lite）后自动完成 阅读→渲染→发布→迁移；unread 55→54、read 5→6，Pages 新页面 200 |
 | AC-1～AC-14 实测结果 | M2–M5 逐条 |
 | 队列架构收尾（2026-11-20）：read/publish 死代码清理、概览 stats 化 | ✅ 已回填（2026-11-20，见 MEMORY「队列架构收尾清理」）：`read.ps1 -DryRun -N 2` 通过（unread 58 选中 2、queue 零写入）、`publish.ps1 -DryRun` 通过、server/app `node --check` 通过 |
+| 后台状态刷新（2026-11-20） | ✅ 已回填（2026-11-20，见 MEMORY「后台状态刷新」）：首启首请求 6.6 秒一次性探测，后续 20~42ms；闲置 68 秒后 233ms→10ms，数据正确 |
+| 材料缓存（2026-11-20） | ✅ 已回填（2026-11-20，见 MEMORY「材料缓存」）：we-promise/sure 首抓 9~16 秒、缓存命中 <1 秒（数字一致）；`-Refresh` 绕过缓存；lite 缓存下 deep 正确重抓；cleanup.ps1 干跑验证 materials 删除路径 |
 | star 修复三连（2026-11-20）：304 不计配额、star filter 失败重试 | ✅ 已回填（2026-11-20）：`scan.ps1 -DryRun` exit 0，star filter 命中 1 条已 star 过滤；304 分支与重试路径经 Parser+DryRun 验证 |
 | read 部分成功语义（2026-11-20）：`gone` 独立计数 + 自动 unstar 清理、任务状态 `partial` | ✅ 已回填（2026-11-20，见 MEMORY 同名条目）：`read.ps1` 404 不再计入 failed；真实运行时对 gone 条目执行 unstar（失败仅告警）；server 对「read 退出码 5 但 succeeded>0」显示 `partial`（琥珀色标签），页面进度文案含「消失 n」与部分成功提示；流水线行为不变（≥1 条 done 即继续） |

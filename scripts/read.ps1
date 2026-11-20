@@ -9,6 +9,7 @@ param(
   [switch]$DryRun,
   [switch]$NoWrite,
   [switch]$NoLlm,
+  [switch]$Refresh,
   [string]$JsonOut = '',
   [string]$LogFile = '',
   [int]$ItemWarnSec = 300
@@ -58,6 +59,54 @@ function Get-StatePath { Join-Path $dataDir 'state.json' }
 function Get-JoySummaryPath([string]$FullName) {
   $p = $FullName -split '/', 2
   return (Join-Path $sumDir (($p[0] + '__' + $p[1]).ToLowerInvariant() + '.json'))
+}
+
+# ------------------------------------------------------------- materials cache
+# Raw fetched materials (README / tree / key files, already truncated) are
+# cached under data/materials/ for retry / -Force reruns, TTL 24h.
+# A deep cache can serve a lite run; a lite cache cannot serve a deep run.
+$matDir = Join-Path $dataDir 'materials'
+if (-not (Test-Path -LiteralPath $matDir)) { New-Item -ItemType Directory -Force -Path $matDir | Out-Null }
+$script:MaterialTtlHours = 24
+
+function Get-JoyMaterialPath([string]$FullName) {
+  $p = $FullName -split '/', 2
+  return (Join-Path $matDir (($p[0] + '__' + $p[1]).ToLowerInvariant() + '.json'))
+}
+
+function Read-JoyMaterialCache([string]$FullName) {
+  if ($Refresh) { return $null }
+  $c = Read-JoyJsonFile (Get-JoyMaterialPath $FullName)
+  if (-not $c) { return $null }
+  if ($c.PSObject.Properties.Name -notcontains 'fetchedAt') { return $null }
+  try {
+    $ageHours = ((Get-Date) - [datetime]$c.fetchedAt).TotalHours
+    if ($ageHours -lt 0 -or $ageHours -gt $script:MaterialTtlHours) { return $null }
+  } catch { return $null }
+  $mode = [string]$c.mode
+  if ($mode -ne 'deep' -and $mode -ne 'lite') { return $null }
+  if ($deepMode -and $mode -ne 'deep') { return $null }
+  return $c
+}
+
+function Write-JoyMaterialCache([string]$FullName, $Meta, $Readme, $Tree, $Files) {
+  if ($NoWrite -or $DryRun) { return }
+  $cache = [ordered]@{
+    version = 1
+    id = ([string]$FullName).ToLowerInvariant()
+    fullName = [string]$FullName
+    mode = $(if ($deepMode) { 'deep' } else { 'lite' })
+    fetchedAt = (New-IsoNow)
+    meta = $Meta
+    readme = @{ ok = [bool]$Readme.ok; status = [int]$Readme.status; text = [string]$Readme.text; chars = [int]$Readme.chars; truncated = [bool]$Readme.truncated }
+    tree = @{ ok = [bool]$Tree.ok; status = [int]$Tree.status; error = [string]$Tree.error; paths = @($Tree.paths) }
+    files = @()
+  }
+  foreach ($f in @($Files)) {
+    if ($null -eq $f) { continue }
+    $cache.files += @{ path = [string]$f.path; ok = [bool]$f.ok; status = [int]$f.status; text = [string]$f.text; chars = [int]$f.chars; truncated = [bool]$f.truncated }
+  }
+  try { Write-JoyJsonFile (Get-JoyMaterialPath $FullName) $cache } catch { }
 }
 
 function New-JoyQueueItem($Li, [int]$Seq, [string]$Status, [string]$SummaryPath) {
@@ -465,70 +514,112 @@ foreach ($item in $wanted) {
       Save-Queue $queue
     }
 
-    $meta = Get-JoyRepoMeta -FullName $full -Token $token -Proxy $proxy
-    if (-not $meta.ok) {
-      if ($meta.status -eq 404) {
-        $item.status = 'gone'; $item.lastError = 'repo 404'
-        Save-Queue $queue
-        $entry.status = 'gone'; $entry.error = 'repo 404'
-        $itemsOut += $entry
-        $script:Result.gone++
-        Write-JoyLog ("repo gone: {0}" -f $full) 'WARN'
-        # auto-cleanup: unstar so GitHub drops the dead repo from Star Lists
-        # (Lists only keep starred repos); failure is logged and non-fatal.
-        if (-not $DryRun -and -not $NoWrite) {
-          $del = Invoke-JoyHttp -Method 'DELETE' -Uri ('https://api.github.com/user/starred/' + $full) `
-            -Headers (New-JoyApiHeaders $token) -Proxy $proxy
-          if ($del.ok -or $del.status -eq 404) {
-            Write-JoyLog ("gone cleanup: unstarred {0}; GitHub will drop it from Lists" -f $full) 'WARN'
-          } else {
-            Write-JoyLog ("gone cleanup failed for {0}: HTTP {1} {2}" -f $full, $del.status, [string]$del.error) 'WARN'
-          }
-        }
-        continue
-      }
-      throw ('meta HTTP ' + $meta.status + ': ' + [string]$meta.error)
-    }
-    $m = $meta.data
-    $branch = [string]$m.default_branch
-    if (-not $branch) { $branch = 'main' }
-
     $warnings = @()
     $sources = @()
     $readmeText = ''
-    $readme = Get-JoyReadme -FullName $full -Token $token -Proxy $proxy -MaxChars $readmeMax
-    if ($readme.ok) {
-      $readmeText = [string]$readme.text
-      $sources += [ordered]@{ path = 'README.md'; chars = [int]$readme.chars; truncated = [bool]$readme.truncated }
-    } else {
-      $warnings += ('no_readme (HTTP ' + $readme.status + ')')
-    }
-
-    $tree = Get-JoyTree -FullName $full -Branch $branch -Token $token -Proxy $proxy -MaxEntries $treeMax
     $paths = @()
     $treeText = ''
-    if ($tree.ok) {
-      $paths = @($tree.paths)
-      $treeText = ($paths -join "`n")
-    } else {
-      $why = if ([string]$tree.error -eq 'tree_json_parse_failed') { 'tree_json_parse_failed' } else { 'HTTP ' + $tree.status }
-      $warnings += ('tree_failed (' + $why + ')')
-    }
-
     $keyPaths = @()
     $filesBlock = ''
-    if ($deepMode -and $paths.Count -gt 0) {
-      $kMax = [Math]::Min($keyMax, [Math]::Max($keyMin, 3))
-      $keyPaths = @(Select-JoyKeyFiles -Paths $paths -Readme $readmeText -Max $kMax)
-      foreach ($kp in $keyPaths) {
-        $f = Get-JoyFileText -FullName $full -Path $kp -Token $token -Proxy $proxy -MaxChars $keyFileMax
-        if ($f.ok) {
-          $filesBlock += ("`nFILE: " + $kp + "`n<<<FILE`n" + $f.text + "`nFILE>>>`n")
-          $sources += [ordered]@{ path = $kp; chars = [int]$f.chars; truncated = [bool]$f.truncated }
-        } else {
-          $warnings += ('file_failed: ' + $kp + ' (HTTP ' + $f.status + ')')
+    $m = $null
+    $branch = ''
+
+    $cached = Read-JoyMaterialCache $full
+    if ($cached) {
+      $m = $cached.meta
+      $branch = [string]$m.default_branch
+      if (-not $branch) { $branch = 'main' }
+      if ($cached.readme.ok) {
+        $readmeText = [string]$cached.readme.text
+        $sources += [ordered]@{ path = 'README.md'; chars = [int]$cached.readme.chars; truncated = [bool]$cached.readme.truncated }
+      } else {
+        $warnings += ('no_readme (HTTP ' + $cached.readme.status + ')')
+      }
+      if ($cached.tree.ok) {
+        $paths = @($cached.tree.paths)
+        $treeText = ($paths -join "`n")
+      } else {
+        $why = if ([string]$cached.tree.error -eq 'tree_json_parse_failed') { 'tree_json_parse_failed' } else { 'HTTP ' + $cached.tree.status }
+        $warnings += ('tree_failed (' + $why + ')')
+      }
+      if ($deepMode) {
+        foreach ($f in @($cached.files)) {
+          if ($null -eq $f) { continue }
+          if ($f.ok) {
+            $keyPaths += [string]$f.path
+            $filesBlock += ("`nFILE: " + $f.path + "`n<<<FILE`n" + $f.text + "`nFILE>>>`n")
+            $sources += [ordered]@{ path = [string]$f.path; chars = [int]$f.chars; truncated = [bool]$f.truncated }
+          } else {
+            $warnings += ('file_failed: ' + $f.path + ' (HTTP ' + $f.status + ')')
+          }
         }
       }
+      Write-JoyLog ("materials {0}: from cache (fetchedAt {1}, mode={2})" -f $full, [string]$cached.fetchedAt, [string]$cached.mode)
+    } else {
+      $meta = Get-JoyRepoMeta -FullName $full -Token $token -Proxy $proxy
+      if (-not $meta.ok) {
+        if ($meta.status -eq 404) {
+          $item.status = 'gone'; $item.lastError = 'repo 404'
+          Save-Queue $queue
+          $entry.status = 'gone'; $entry.error = 'repo 404'
+          $itemsOut += $entry
+          $script:Result.gone++
+          Write-JoyLog ("repo gone: {0}" -f $full) 'WARN'
+          # auto-cleanup: unstar so GitHub drops the dead repo from Star Lists
+          # (Lists only keep starred repos); failure is logged and non-fatal.
+          if (-not $DryRun -and -not $NoWrite) {
+            $del = Invoke-JoyHttp -Method 'DELETE' -Uri ('https://api.github.com/user/starred/' + $full) `
+              -Headers (New-JoyApiHeaders $token) -Proxy $proxy
+            if ($del.ok -or $del.status -eq 404) {
+              Write-JoyLog ("gone cleanup: unstarred {0}; GitHub will drop it from Lists" -f $full) 'WARN'
+            } else {
+              Write-JoyLog ("gone cleanup failed for {0}: HTTP {1} {2}" -f $full, $del.status, [string]$del.error) 'WARN'
+            }
+          }
+          continue
+        }
+        throw ('meta HTTP ' + $meta.status + ': ' + [string]$meta.error)
+      }
+      $m = $meta.data
+      $branch = [string]$m.default_branch
+      if (-not $branch) { $branch = 'main' }
+
+      $readme = Get-JoyReadme -FullName $full -Token $token -Proxy $proxy -MaxChars $readmeMax
+      if ($readme.ok) {
+        $readmeText = [string]$readme.text
+        $sources += [ordered]@{ path = 'README.md'; chars = [int]$readme.chars; truncated = [bool]$readme.truncated }
+      } else {
+        $warnings += ('no_readme (HTTP ' + $readme.status + ')')
+      }
+
+      $tree = Get-JoyTree -FullName $full -Branch $branch -Token $token -Proxy $proxy -MaxEntries $treeMax
+      if ($tree.ok) {
+        $paths = @($tree.paths)
+        $treeText = ($paths -join "`n")
+      } else {
+        $why = if ([string]$tree.error -eq 'tree_json_parse_failed') { 'tree_json_parse_failed' } else { 'HTTP ' + $tree.status }
+        $warnings += ('tree_failed (' + $why + ')')
+      }
+
+      $fetchFiles = @()
+      if ($deepMode -and $paths.Count -gt 0) {
+        $kMax = [Math]::Min($keyMax, [Math]::Max($keyMin, 3))
+        $keyPaths = @(Select-JoyKeyFiles -Paths $paths -Readme $readmeText -Max $kMax)
+        foreach ($kp in $keyPaths) {
+          $f = Get-JoyFileText -FullName $full -Path $kp -Token $token -Proxy $proxy -MaxChars $keyFileMax
+          $fetchFiles += @{ path = $kp; ok = [bool]$f.ok; status = [int]$f.status; text = [string]$f.text; chars = [int]$f.chars; truncated = [bool]$f.truncated }
+          if ($f.ok) {
+            $filesBlock += ("`nFILE: " + $kp + "`n<<<FILE`n" + $f.text + "`nFILE>>>`n")
+            $sources += [ordered]@{ path = $kp; chars = [int]$f.chars; truncated = [bool]$f.truncated }
+          } else {
+            $warnings += ('file_failed: ' + $kp + ' (HTTP ' + $f.status + ')')
+          }
+        }
+      } elseif (-not $deepMode) {
+        # nothing: lite mode fetches no key files
+      }
+
+      Write-JoyMaterialCache $full $m $readme $tree $fetchFiles
     }
 
     $entry.materials.readmeChars = $readmeText.Length

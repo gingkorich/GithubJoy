@@ -233,7 +233,7 @@ GitHub Joy 把这件事做成一条流水线：
   - 顶部：日期、n、成功/失败/跳过统计、周期分布（today/week/month 各几条）、模式（deep/lite）、总耗时；
   - 每个项目一张卡片，**顺序固定**：标题（含 ★ star 数）→ `overview` 一段通俗叙述 → 「实现逻辑」问答（问题加粗带序号 Q1…Qn，回答成段，可折叠）→ 仓库链接；**不再展示技术栈 / 适用场景 / 风险 / 抓取信息**；
   - 问答按 `qa[]` 原顺序渲染，回答中的文件路径用等宽字体；`refs` 悬停或脚注标出来源文件；
-  - 底部：本轮失败项与原因、数据来源与口径说明（`source=search`）、生成时间与 RunId；
+  - 底部：数据来源与口径说明（`source=search`）、生成时间与 RunId（失败项不进报告，明细见任务日志）；
 - 自包含：内联 CSS，无外部字体/脚本/CDN；支持深色模式（`prefers-color-scheme`）、打印友好、移动端可读；
 - 安全：所有外部文本（README 片段、描述、仓库名）HTML 转义，仅放行 `<br>`；不渲染原始 HTML；
 - 生成采用「先写临时文件再原子替换」，中断不留下半成品。
@@ -549,4 +549,4 @@ GitHub Joy 把这件事做成一条流水线：
 | 2026-11-19 | 1.0 | 确认 Q1–Q10：GraphQL Lists、默认 star、仅 Search API、本仓库 `docs/`、本期不调度、n 上限 20/默认 5/永久保留、默认 deep、不引入 Playwright、FIFO、发布成功才迁移；同步改写 FR-1 / FR-7 / FR-8 / FR-9 |
 | 2026-11-19 | 1.1 | 需求变更：新增本地控制台 FR-13（Node 标准库服务、127.0.0.1、令牌与 Host 校验）、GitHub CLI 集成 FR-14；改写 FR-5（overview + Q&A）与 FR-6（卡片顺序）；新增第 11 节账号风险与合规评估；补充 Q11–Q14 |
 | 2026-11-19 | 1.2 | 代理支持：FR-14 增加代理配置与自动探测；第 9 节记录「gh 不读系统代理」约束；实测 `github.com:443` 直连超时、代理 200 |
-| 2026-11-20 | 1.3 | 按实际实现同步文档：干跑开关统一为实际存在的 `-DryRun` / `-NoWrite` / `-NoLlm` / `-NoPush` / `-NoStar`（`-NoPublish` / `-NoMark` / `-Repair` 未实现，文中移除）；明确队列不跨轮持久化、GitHub Lists 为唯一状态源；`run-joy.bat` 只做阅读（发布/迁移由控制台流水线或手动脚本完成）；概览统计改由 summaries / reports-index 派生 |
+| 2026-11-20 | 1.3 | 按实际实现同步文档：干跑开关统一为实际存在的 `-DryRun` / `-NoWrite` / `-NoLlm` / `-NoPush` / `-NoStar`（`-NoPublish` / `-NoMark` / `-Repair` 未实现，文中移除）；明确队列不跨轮持久化、GitHub Lists 为唯一状态源；`run-joy.bat` 只做阅读（发布/迁移由控制台流水线或手动脚本完成）；概览统计改由 summaries / reports-index 派生；报告底部移除从未实现的「失败项与原因」区块（DESIGN D17） |

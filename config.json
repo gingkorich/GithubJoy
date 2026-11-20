@@ -31,6 +31,7 @@
     "jobDays": 30,
     "logDays": 90,
     "trendingDays": 90,
-    "keepJobs": 20
+    "keepJobs": 20,
+    "materialDays": 30
   }
 }

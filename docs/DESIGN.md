@@ -91,6 +91,7 @@ D:\AIproject\GithubJoy\
 │  ├─ queue.json
 │  ├─ state.json
 │  ├─ trending-YYYY-MM-DD.json
+│  ├─ materials/<owner>__<repo>.json   # 材料缓存（TTL 24h，retention.materialDays 清理）
 │  ├─ summaries/<owner>__<repo>.json
 │  ├─ jobs/<jobId>.json
 │  ├─ state/lists-<RunId>.json
@@ -212,7 +213,7 @@ D:\AIproject\GithubJoy\
   "lastScan": {
     "runId": "scan-20261119-080211", "at": "2026-11-19T08:02:11Z", "durationMs": 41230,
     "scanned": 75, "added": 8,
-    "skipped": { "already_unread": 30, "already_read": 12, "already_done": 0, "denied": 25 },
+    "skipped": { "already_unread": 30, "already_read": 12, "denied": 25 },
     "totalUnreadAfter": 23
   },
   "lastRead": { "runId": "read-20261119-203001", "n": 5, "succeeded": 4, "failed": 1, "at": "…" },
@@ -303,10 +304,9 @@ key  = fullName.ToLowerInvariant()
 过滤（按此顺序，逐项计数）：
   1) 已在 read                → already_read
   2) 已在 unread              → already_unread
-  3) queue 中 done / moved    → already_done（历史分支：queue 为运行期草稿，通常恒空，不命中）
-  4) 命中 denylist            → denied
-  5) 已 star（viewerHasStarred，批量 25/次）→ starred
-  6) 否则进入选择池
+  3) 命中 denylist            → denied
+  4) 已 star（viewerHasStarred，批量 25/次）→ starred
+  5) 否则进入选择池
 ```
 
 **选择（2026-11-19 修订）**：
@@ -351,7 +351,7 @@ mutation AddToUnread($itemId: ID!, $listIds: [ID!]!) {
 
 所以 `listIds` 必须 = `unread` + 该条目当前所属的其它 List；否则会清掉用户手工归类。
 
-**实测约束（2026-11-19）**：Star Lists **只保留已 star 的仓库**。用 `-NoStar` 先写 List，5 个条目在约 1 小时后从 `unread` 消失（40 → 35），且这 5 个 `viewerHasStarred=false`；剩余 35 个全部为 true。因此流程固定为「**先 star，再写 List**」，`-NoStar` 时跳过 List 写入并告警；未写入 List 的条目在下次扫描时经 star 过滤自然重新入选（`toEnsure` 队列分支为历史遗留，queue 恒空时不会命中）。
+**实测约束（2026-11-19）**：Star Lists **只保留已 star 的仓库**。用 `-NoStar` 先写 List，5 个条目在约 1 小时后从 `unread` 消失（40 → 35），且这 5 个 `viewerHasStarred=false`；剩余 35 个全部为 true。因此流程固定为「**先 star，再写 List**」，`-NoStar` 时跳过 List 写入并告警；未写入 List 的条目在下次扫描时经 star 过滤自然重新入选。
 
 读取成员关系的高效做法（每次扫描只做一次）：
 
@@ -380,7 +380,7 @@ query ListIndex($cursor: String) {
 ### 4.6 统计（日志与 state 用同一份数字）
 
 ```
-scanned = added + already_unread + already_read + already_done + denied
+scanned = added + already_unread + already_read + denied
 starred / starSkippedCap / starFailed
 listsCreated / listAddFailed
 ```
@@ -397,7 +397,7 @@ listsCreated / listAddFailed
 1. 选条目：从 **unread List** 按 List 顺序取前 n（或 -OnlyId / -IdsFile，必须在 List 中）→ 写入**本轮临时队列**（n 条）→ 置 summarizing；读完清空队列
 2. 逐条：抓材料 → LLM → 校验 → 写 summaries/<id>.json（断点）→ 置 done
    失败：置 failed、记录 lastError，继续下一条
-3. 全部处理完（含失败）→ render.ps1 生成本轮 HTML（含失败项说明）
+3. 全部处理完（含失败）→ render.ps1 生成本轮 HTML（失败项不进报告；失败明细见 `data/jobs/<id>.json` 与日志）
 4. publish.ps1：把 reports/ 页面加入 git + 根 `.nojekyll` → commit → push
 5. 发布成功 → migrate.ps1：快照 → 逐条迁移 → 置 moved
    发布失败 → 保留 done/published=false，退出码非 0，不迁移
@@ -692,7 +692,7 @@ function ConvertTo-HtmlText([string]$s) {
 
 - 首条 `details` 默认展开，其余折叠；打印时用 `@media print { details > * { display: block } }` 强制全展开。
 - 顶部统计条：日期、n、成功/失败、周期分布、模式、耗时、`source=search` 口径说明。
-- 底部：失败项与原因、生成时间、RunId、Pages 链接（仅 `published=true` 时）。
+- 底部：生成时间、RunId（失败项不进报告——从未实现，见第 15 节 D17；失败明细看 `data/jobs/<id>.json` 与日志）。
 
 ### 7.4 样式与可访问性
 
@@ -945,7 +945,7 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 |---|---|---|---|
 | D1 | 迁移用**单次** `updateUserListsForItem`（替换 `listIds`） | FR-7 写「从 unread 移除 → 加入 read」 | schema 语义为整体替换，一次调用等效，少一个失败窗口；需合并其它 List 防误删 |
 | D2 | 发布「无 diff」视为成功 | FR-8「push 成功」 | 重跑不应因无可提交内容而失败 |
-| D3 | unread 总数缓存 30 秒 | FR-13 要求展示，未定刷新频率 | 避免 3 秒轮询打爆 GraphQL |
+| D3 | gh 状态与 unread/read 数量：**首次加载同步探测一次，此后 60 秒后台定时刷新**，请求永远读缓存（过期返旧值 + 触发后台刷新）；任务/登录结束主动置脏 | FR-13 要求展示，未定刷新频率 | 轮询请求（3 秒一次）不再同步 spawn `gh`/PowerShell 进程（冷启 1~3 秒），页面无周期性卡顿 |
 | D4 | 索引数据源为 `data/reports-index.json` | FR-6 只要求索引页 | 不反向解析 HTML，生成更稳 |
 | D5 | Node 不直接调 GitHub API | 需求未规定分层 | 认证与重试集中在一处，避免两套实现漂移 |
 | D6 | 新增退出码 4（服务启动失败）、5（部分成功） | FR-11 未定义退出码 | 页面与 bat 需要区分「起不来」与「部分失败」 |
@@ -959,6 +959,9 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 | D14 | 队列降级为 read 运行期临时工作集（不持久化、不跨轮）：GitHub Lists 为唯一状态源，summaries 为渲染数据源，reports-index 为发布状态源 | FR-2 原按队列持久化设计（2026-11-20 用户变更） | 消除「本地队列 vs 远端 List」双源漂移；失败/中断恢复改为依赖 List 与 summaries 的天然幂等 |
 | D15 | `run-joy.bat` 只透传 `read.ps1`（不自动渲染/发布/迁移）；完整流水线（read→render→publish→migrate）由控制台 `POST /api/read` 编排 | RUNBOOK 原设想 `run-joy.bat 5` 等价于页面「阅读」 | 无界面入口保持单一职责；需要发布时手动分步跑脚本 |
 | D16 | ~~控制台概览统计改为 `stats{summarized, reports, published}`~~（2026-11-20 撤销：用户决定页面不需要这些数字，`dashboard()` 只返回 scan/read，避免无 UI 消费的死数据） | DESIGN 6.4 原统计 queue | 队列不跨轮后 queue 状态恒为 0；改派生 stats 又无展示价值，最终选择直接移除统计字段 |
+| D17 | 报告不渲染「失败项与原因」区块：删除模板 `{{FAILED}}` 占位与恒空填充代码（2026-11-20） | FR-5 原要求报告底部展示失败项 | 失败项从未实现渲染；失败明细已在 `data/jobs/<id>.json`（items[].error）与日志中完整可查，报告只承载成功总结 |
+| D18 | gh 状态与 lists 探测改为「后台 60 秒定时刷新 + 过期返旧值」：`/api/status` 轮询不再同步等待子进程；任务/登录结束调用 `invalidateGh()/invalidateLists()` 置脏并立即后台刷新；未登录时跳过 lists 探测（2026-11-20） | 原设计 30 秒缓存过期后由请求同步触发 PowerShell 探测 | 轮询响应从偶发 1~45 秒卡顿变为毫秒级；子进程创建降到每 60 秒一次且在后台 |
+| D19 | read 增加材料缓存：截断后的 README/目录树/关键文件存 `data/materials/<owner>__<repo>.json`（TTL 24 小时，deep 缓存可服务 lite 运行、反之重抓）；`-Refresh` 强制重新抓取；`-DryRun`/`-NoWrite` 不写缓存；`cleanup.ps1` 按 `retention.materialDays`（默认 30 天）清理（2026-11-20） | 需求未列（原「有缓存计划」未落地） | LLM 失败重试与 `-Force` 重做不再重复抓取（省时 + 省 GitHub 配额）；单条约 35~75 KB，量级可控 |
 
 ---
 

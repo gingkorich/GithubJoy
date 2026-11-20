@@ -238,10 +238,31 @@ star 修复三连（2026-11-20）：
 - `Get-JoyStarredMap`：批量 GraphQL 查询失败时**先重试一次**（间隔 2s）再判失败，减少「整批按未 star 处理 → 重复 PUT」的概率；仍失败时维持旧行为（按未 star 处理，幂等 PUT 兜底）。
 - 实测：`scan.ps1 -DryRun` 全链路通过（exit 0、star filter 正常、候选 49 / 选中 11 / starred=1 过滤命中）；PS Parser 0 错误。
 
+材料缓存（2026-11-20，问题 16 修复）：
+- `read.ps1` 新增 `-Refresh` 参数与材料缓存：截断后的 meta/README/树/关键文件存 `data/materials/<owner>__<repo>.json`，TTL 24 小时；deep 缓存可服务 lite 运行（跳过文件），lite 缓存不能服务 deep 运行（重抓）；`-DryRun`/`-NoWrite` 不写缓存（`-NoLlm` 会写——预热场景）；缓存命中时日志打 `materials ...: from cache (fetchedAt ..., mode=...)`。
+- `cleanup.ps1` 新增第 6 条规则：按 `retention.materialDays`（默认 30 天，参数 `-MaterialDays`）清理 materials 目录，与 jobs/logs/trending 同一入口（服务自动触发 + 手动 `-DryRun`）。
+- 实测（we-promise/sure，走代理）：首次抓取 9~16 秒（lite 33 KB / deep 44.6 KB 含 3 个关键文件）；第二次 `-Lite -NoLlm` 命中缓存，材料阶段 <1 秒，数字一致（readme=7806 tree=200 files=3）；`-Refresh` 正确绕过缓存重抓；lite 缓存存在时 deep 运行正确重抓并升级缓存为 deep；cleanup 用伪造旧时间戳干跑验证会删 materials 且恢复后不动。
+
+后台状态刷新（2026-11-20，问题 15 修复）：
+- `server.js`：`listsStatus()` 与 `ghStatus()` 统一改为「首次加载同步探测一次 → 之后 60 秒后台定时刷新 → 请求过期时返旧值并异步触发刷新」，`/api/status` 3 秒轮询不再同步 spawn PowerShell/gh；任务结束与登录/登出的 5 处缓存失效改为 `invalidateGh(); invalidateLists()`（置脏 + 立即后台刷新）；定时器在 gh 未登录时跳过 lists 探测。
+- 实测（本机，Node 24）：首启第 1 次请求 6.6 秒（一次性，gh+status.ps1 探测），第 2~4 次 20~42ms；闲置 68 秒（跨过 TTL 与定时器周期）后请求 233ms→7~10ms，`gh.auth=True、unread=55、readCount=8` 数据正确。
+- 顺带修正此前误判：`testLlm` 其实已有代理兜底（`httpViaProxy` CONNECT 隧道，直连失败才走），问题清单中的「/api/llm/test 不走代理」不成立。
+
 文档同步 v1.3（2026-11-20）：
 - 三件套 + README + AGENTS 全量对齐实际实现：版本头改为「M1–M4c 已上线」；移除所有不存在的开关（`-NoPublish` / `-NoMark` / `-Repair` / `-RepairStar`），替换为实际的 `-DryRun` / `-NoWrite` / `-NoLlm` / `-NoPush` / `-NoStar`；
 - DESIGN：目录树删掉未建的 jobs.js/state.js/html.ps1/self-test.ps1；3.6 状态机改为运行期口径；渲染输入改为仅 summaries；/api/status 示例 queue→stats；5.5 发布流程按 publish.ps1 实际重写；9.2/9.3 崩溃恢复与一致性修复按「List 为唯一状态源」重写；新增偏差登记 D14（队列降级）/D15（run-joy 只读）/D16（概览 stats 化）；
 - RUNBOOK：2.7 首跑改用 DryRun/NoWrite 阶梯；3.2/3.3 明确 run-joy.bat 只做阅读、发布迁移需页面流水线或分步脚本；7.3 一致性修复改为分步重跑；7.4 回滚改用 migrate.ps1 -Rollback；7.5 queue.json 损坏可直接删；12.1/12.2/12.4 同步。
+
+render 失败区块清除（2026-11-20，问题 #14）：
+- `render.ps1` 删除 `$html.Replace('{{FAILED}}', '')` 恒空填充；`templates/report.html.tpl` 删除 `<section class="failed">{{FAILED}}</section>` 区块（生成产物中的空 `<section class="failed"></section>` 一并不再出现）；
+- 文档：DESIGN 5.2/7.3 与 REQUIREMENTS FR-5 移除「报告底部展示失败项」的承诺（失败明细在 `data/jobs/<id>.json` 的 items[].error 与日志）；DESIGN 第 15 节新增 D17 偏差登记；
+- 实测：`render.ps1 -N 1 -NoIndex -OutDir .work\render-test` 生成报告无 failed 区块、无残留占位符、卡片/问答渲染正常。
+
+scan 死代码清除（2026-11-20）：
+- `scan.ps1`：不再读 `queue.json`（改为纯内存镜像，仅用于日志/任务结果）；删除 `Get-QueuePath`、`$queueIndex` 构建、过滤循环中的 `already_done`/`toEnsure`/`gone` 队列状态分支（queue 恒空永不命中）；删除结果里的假字段 `queued=0` / `ensured=0` / `queueFile=null`（`ensured` 此前硬编码覆盖真实值）；star 容量计算去掉 `$ensureNeed`；DryRun 分支去掉 `$ensuredPlan`。
+- 保留：`-MaxAdd` 有实际截断逻辑（502-506 行），上轮误判为死参数，已在 RUNBOOK 12.1 标注有效；`already_unread`/`already_read`/`denied`/starred 过滤顺序不变。
+- 文档同步：DESIGN 4.3 过滤表删 already_done 行、4.5 删 toEnsure 提法、4.6/3.4 与 RUNBOOK 2.x 的 scanned 恒等式去掉 already_done。
+- 实测：`scan.ps1 -DryRun` 通过（结果 JSON 无 queued/ensured/queueFile/already_done 字段，added/skipped 数值正常，零写入）。
 
 队列架构收尾清理（2026-11-20）：
 - 背景确认：队列已是"read 运行期临时工作集"（开始 reset、`Save-Queue` 在 DryRun/NoWrite 下不落盘、结束清空），GitHub Star Lists 是唯一状态源；migrate 从 `reports-index.json` 的 published ids ∩ unread List 实时成员选择，不依赖队列。

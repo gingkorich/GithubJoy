@@ -223,7 +223,6 @@ $html = $tpl.Replace('{{TITLE}}', (ConvertTo-JoyHtml ($L.reportTitleTpl.Replace(
 $html = $html.Replace('{{SUBTITLE}}', (ConvertTo-JoyHtml ($L.reportSubtitleTpl.Replace('{count}', [string]$selected.Count).Replace('{qa}', [string]$qaTotal))))
 $html = $html.Replace('{{STATS}}', (ConvertTo-JoyHtml $statsText))
 $html = $html.Replace('{{CARDS}}', $cards.ToString())
-$html = $html.Replace('{{FAILED}}', '')
 $footer = $L.footerTpl.Replace('{runId}', $runTag)
 $html = $html.Replace('{{FOOTER}}', (ConvertTo-JoyHtml $footer))
 

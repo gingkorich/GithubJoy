@@ -39,8 +39,7 @@ $script:Result = [ordered]@{
   proxy          = $null
   scanned        = 0
   added          = 0
-  queued         = 0
-  skipped        = [ordered]@{ already_read = 0; already_unread = 0; already_done = 0; denied = 0; starred = 0; capped = 0; star_quota = 0 }
+  skipped        = [ordered]@{ already_read = 0; already_unread = 0; denied = 0; starred = 0; capped = 0; star_quota = 0 }
   starred        = 0
   starSkipped    = 0
   starFailed     = 0
@@ -53,7 +52,6 @@ $script:Result = [ordered]@{
   unreadCount    = 0
   totalUnreadAfter = 0
   trendingFile   = $null
-  queueFile      = $null
   error          = $null
   hint           = $null
 }
@@ -79,7 +77,6 @@ function Fail-JoyScan([int]$Code, [string]$Message, [string]$Hint = '') {
 
 function New-IsoNow { return (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }
 
-function Get-QueuePath { Join-Path $dataDir 'queue.json' }
 function Get-StatePath { Join-Path $dataDir 'state.json' }
 function Get-TrendingPath([string]$Date) { Join-Path $dataDir ("trending-$Date.json") }
 
@@ -273,20 +270,14 @@ Write-JoyLog "unique candidates: $($candidates.Count)"
 Write-JoyEvent @{ evt = 'progress'; phase = 'search'; done = $periods.Count; total = $periods.Count }
 
 # ---------------------------------------------------------------- state
-$queue = Read-JoyJsonFile (Get-QueuePath)
-if (-not $queue) { $queue = Get-InitialQueue }
-if (-not ($queue.PSObject.Properties.Name -contains 'items')) { $queue | Add-Member -NotePropertyName items -NotePropertyValue @() -Force }
+# queue.json is a per-run scratch file owned by read.ps1; scan never reads or
+# writes it (queue mirror below is in-memory only, for job logging).
+$queue = Get-InitialQueue
 $state = Read-JoyJsonFile (Get-StatePath)
 if (-not $state) { $state = Get-InitialState }
 if (-not ($state.PSObject.Properties.Name -contains 'starCounters') -or -not $state.starCounters) {
   $state | Add-Member -NotePropertyName starCounters -NotePropertyValue ([pscustomobject]@{ day = (Get-Date).ToString('yyyy-MM-dd'); count = 0 }) -Force
 }
-
-$queueIndex = @{}
-foreach ($qi in @($queue.items)) {
-  if ($null -ne $qi -and $qi.id) { $queueIndex[([string]$qi.id).ToLowerInvariant()] = $qi }
-}
-Write-JoyLog "queue items: $($queue.items.Count), seq=$($queue.seq)"
 
 # ---------------------------------------------------------------- lists
 Write-JoyEvent @{ evt = 'progress'; phase = 'lists'; done = 0; total = 1 }
@@ -380,14 +371,11 @@ Write-JoyEvent @{ evt = 'progress'; phase = 'lists'; done = 1; total = 1 }
 
 # ---------------------------------------------------------------- filter
 $toAdd = @()
-$toEnsure = @()
 $skipped = $script:Result.skipped
 
 foreach ($c in $candidates) {
   $ids = @()
   if ($member.ContainsKey($c.key)) { $ids = @($member[$c.key].ToArray()) }
-  $qi = $null
-  if ($queueIndex.ContainsKey($c.key)) { $qi = $queueIndex[$c.key] }
 
   $inUnread = $false
   $inRead = $false
@@ -395,26 +383,13 @@ foreach ($c in $candidates) {
   if ($read -and $read.id -and ($ids -contains [string]$read.id)) { $inRead = $true }
 
   if ($inRead) { $skipped.already_read++; continue }
-  if ($inUnread) {
-    $skipped.already_unread++
-    if ($qi -and $qi.PSObject.Properties.Name -contains 'list' -and $qi.list) { $qi.list.inUnread = $true }
-    continue
-  }
-  if ($qi) {
-    $st = [string]$qi.status
-    if ($st -in @('done', 'moved')) { $skipped.already_done++; continue }
-    if ($st -in @('pending', 'summarizing', 'failed')) {
-      $toEnsure += [pscustomobject]@{ cand = $c; qi = $qi; ids = $ids }
-      continue
-    }
-    if ($st -eq 'gone') { continue }
-  }
+  if ($inUnread) { $skipped.already_unread++; continue }
   if (Test-Denied $c.repo $cfg) { $skipped.denied++; continue }
   $toAdd += [pscustomobject]@{ cand = $c; ids = $ids }
 }
 
-Write-JoyLog ("filtered: add={0} ensure={1} skipped(read={2},unread={3},done={4},denied={5})" -f `
-  $toAdd.Count, $toEnsure.Count, $skipped.already_read, $skipped.already_unread, $skipped.already_done, $skipped.denied)
+Write-JoyLog ("filtered: add={0} skipped(read={1},unread={2},denied={3})" -f `
+  $toAdd.Count, $skipped.already_read, $skipped.already_unread, $skipped.denied)
 
 # ---------------------------------------------------------------- star config (needed for quota)
 $starCfg = $null
@@ -508,8 +483,7 @@ if ($MaxAdd -gt 0 -and $toAdd.Count -gt $MaxAdd) {
 # never add more than the remaining daily star quota, so "added => starred" holds
 $dayRemaining = $maxDay - $dayCount
 if ($dayRemaining -lt 0) { $dayRemaining = 0 }
-$ensureNeed = @($toEnsure | Where-Object { -not $_.qi.starred }).Count
-$capacity = [Math]::Min($maxScan, $dayRemaining) - $ensureNeed
+$capacity = [Math]::Min($maxScan, $dayRemaining)
 if ($capacity -lt 0) { $capacity = 0 }
 if ($toAdd.Count -gt $capacity) {
   $dropped = $toAdd.Count - $capacity
@@ -548,7 +522,6 @@ foreach ($n in $toAdd) {
     movedAt     = $null
   }
   $queue.items = @($queue.items) + $qi
-  $queueIndex[$n.cand.key] = $qi
   $newEntries += [pscustomobject]@{ qi = $qi; ids = $n.ids }
 }
 $queue.seq = $seq
@@ -562,15 +535,12 @@ if ($unread) { $unreadId = [string]$unread.id }
 $addFailed = @()
 $addedOk = 0
 $addedPlan = 0
-$ensuredOk = 0
-$ensuredPlan = 0
 $starCount = 0
 $starPlan = 0
 $starSkipped = 0
 $starFailed = 0
 
 $mutations = @()
-foreach ($e in $toEnsure) { $mutations += [pscustomobject]@{ qi = $e.qi; ids = $e.ids; isNew = $false } }
 foreach ($e in $newEntries) { $mutations += [pscustomobject]@{ qi = $e.qi; ids = $e.ids; isNew = $true } }
 
 if ($mutations.Count -gt 0 -and -not $unreadId -and -not $DryRun) {
@@ -598,9 +568,8 @@ foreach ($m in $mutations) {
       if ($dayCount -ge $maxDay) { $m.qi.starSkipped = 'cap_per_day'; $starSkipped++; continue }
       $starPlan++
     }
-    if ($m.isNew) { $addedPlan++ } else { $ensuredPlan++ }
-    $planTotal = $addedPlan + $ensuredPlan
-    if ($planTotal -le 10) {
+    $addedPlan++
+    if ($addedPlan -le 10) {
       Write-JoyLog ("dryRun: would star + set Lists for {0} -> [{1}]" -f $m.qi.fullName, ($target -join ', '))
     }
     continue
@@ -656,23 +625,20 @@ foreach ($m in $mutations) {
   $other = @()
   foreach ($id in $target) { if ($id -ne $unreadId) { $other += $id } }
   $m.qi.list.otherListIds = $other
-  if ($m.isNew) { $addedOk++ } else { $ensuredOk++ }
+  $addedOk++
   Start-Sleep -Milliseconds 300
 }
 
 if ($DryRun) {
   $addedOk = $addedPlan
-  $ensuredOk = $ensuredPlan
 }
 $script:Result.listAddFailed = $addFailed
-$script:Result.queued = 0
 $script:Result.added = $addedOk
-$script:Result.ensured = 0
 Write-JoyLog ("star: done={0} planned={1} skipped={2} failed={3}" -f $starCount, $starPlan, $starSkipped, $starFailed)
 Write-JoyLog ("lists write: addedOk={0} failed={1}" -f $addedOk, $addFailed.Count)
 
 # ---------------------------------------------------------------- persist
-$totalUnreadAfter = $unreadCount + $addedOk + $ensuredOk
+$totalUnreadAfter = $unreadCount + $addedOk
 $elapsed = [int]((Get-Date) - $started).TotalMilliseconds
 
 $state.lastScan = [pscustomobject][ordered]@{
@@ -681,8 +647,6 @@ $state.lastScan = [pscustomobject][ordered]@{
   durationMs = $elapsed
   scanned = $records.Count
   added = $addedOk
-  queued = 0
-  ensured = 0
   skipped = $skipped
   totalUnreadAfter = $totalUnreadAfter
 }
