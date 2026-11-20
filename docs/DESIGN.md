@@ -73,6 +73,7 @@ D:\AIproject\GithubJoy\
 │  ├─ publish.ps1              # FR-8
 │  ├─ migrate.ps1              # FR-7（快照 / 迁移 / 回滚 / 补偿）
 │  ├─ status.ps1               # 供服务查询：gh 状态、unread/read 总数
+│  ├─ cleanup.ps1              # 运行产物清理（扫描/流水线后自动触发，规则见 config.retention）
 │  ├─ probe-lists.ps1          # M1：Lists 只读探针（验证 R2）
 │  ├─ lib/
 │  │  ├─ config.ps1            # 配置读取（UTF-8 无 BOM，容忍 BOM）
@@ -327,9 +328,9 @@ newItems 按 seq 升序：
   if starredThisScan >= config.star.maxPerScan (25) → starSkipped = "cap_per_scan"
   if starredToday   >= config.star.maxPerDay  (100) → starSkipped = "cap_per_day"
   否则 PUT /user/starred/{owner}/{repo}
-       204 → starred=true；304/已 star → 视为成功
+       204 → starred=true；304（已 star，幂等）→ starred=true 但不计入轮/日配额
        403/429 → 记录错误，退避后最多重试 2 次
-  每次请求后 sleep config.star.intervalMs (1000)
+  每次真实 star（非 304）后 sleep config.star.intervalMs (1000)
 ```
 
 - star 失败不是致命错误：该条**跳过 List 写入**（`inUnread=false`、记录 `lastError`），下轮扫描会重新发现它并补「star + List」。
@@ -430,7 +431,7 @@ deep: 取 top 3–5；lite: 取 0
 
 ### 5.3 LLM 调用与校验
 
-- 输入预算：README 20k + 目录树 6k + 关键文件 ≤40k ≈ 66k 字符（约 20k tokens）。超过 `config.llm.maxInputChars`（默认 70,000）按「关键文件 → 目录树 → README 尾部」截断，并在 `sources[].truncated` 标记。
+- 输入预算：单项截断（README ≤`read.readmeMaxChars`(20k)、树 ≤`treeMaxEntries`(200 行)、关键文件 ≤`keyFilesMin–Max` × `keyFileMaxChars`(8k)）；三项合计超过 `read.maxInputChars`（默认 70,000，2026-11-20 实装）时按「关键文件尾部 → 目录树尾部 → README 尾部」顺序削到预算内，并在 `warnings[]` 记录 `input_truncated`/`input_budget` 明细（`sources[].truncated` 只反映单项抓取截断，不反映总预算裁剪）。
 - 输出契约（严格 JSON，不允许 Markdown 包裹）：
 
 ```json
@@ -497,7 +498,7 @@ publish.ps1 [-DryRun] [-NoPush] [-Message <msg>]
  10. 推送成功后把 reports-index 对应条目标 published=true / pushedAt / url
 ```
 
-- 页面地址：`<baseUrl>/<dir>/<file>`；根 `index.html` 只是归档入口（手工维护，见 RUNBOOK 12.2）。
+- 页面地址：`<baseUrl>/<dir>/<file>`；根 `index.html` 是**站点首页（Pages 首页）**，由 render.ps1 与 `reports/index.html` 同时生成（链接带 `reports/` 前缀并含「最新一期」入口），publish 一并提交——不再是手工维护文件。
 
 - **禁止** `git add -A`；`git status --porcelain` 中与本轮无关的改动只提示、不提交。
 - 推送后不等待 Pages 构建（通常 10–60 秒）；index 条目记录 `pushedAt`，页面文案只写「已推送」不写「已上线」。
@@ -642,7 +643,7 @@ summaries/*.json（渲染唯一输入；-N 取最近修改的 N 份，或 -OnlyI
 data/reports-index.json  ◀── 追加本轮条目
         │
         ▼  templates/report.html.tpl + index.html.tpl + labels.json（中文文案外置）
-reports/<yyyyMMddHHmmss>.html（生成时刻，精确到秒；同一秒冲突时追加 `-1`、`-2`…）、reports/latest.html、reports/index.html
+reports/<yyyyMMddHHmmss>.html（生成时刻，精确到秒；同一秒冲突时追加 `-1`、`-2`…）、reports/latest.html、reports/index.html、根 index.html（站点首页，链接带 reports/ 前缀 + 最新一期入口，与 reports/index.html 同源生成）
 ```
 
 > 注：queue.json 不再作为渲染输入（队列是运行期草稿，read 结束即清空）。
@@ -987,9 +988,16 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
     "treeMaxEntries": 200,
     "keyFilesMin": 3,
     "keyFilesMax": 5,
-    "keyFileMaxChars": 8000
+    "keyFileMaxChars": 8000,
+    "maxInputChars": 70000
+  },
+  "retention": {
+    "jobDays": 30,
+    "logDays": 90,
+    "trendingDays": 90,
+    "keepJobs": 20
   }
 }
 ```
 
-> 2026-11-20 变更：删除 `config.sample.json`；`Get-JoyConfig` 与 server 的 `loadConfig` 改为只读 `config.json`。已移除无代码消费者的键：顶层 `version`、`network.noProxy`、整个 `llm`（模型配置只认 `llm.json`）、`publish`、`retention`、`service` 节。
+> 2026-11-20 变更：删除 `config.sample.json`；`Get-JoyConfig` 与 server 的 `loadConfig` 改为只读 `config.json`。已移除无代码消费者的键：顶层 `version`、`network.noProxy`、整个 `llm`（模型配置只认 `llm.json`）、`publish`、`service` 节。同日新增 `read.maxInputChars`（LLM 输入总预算，实装）与 `retention`（cleanup.ps1 消费）。

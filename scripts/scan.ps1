@@ -624,9 +624,14 @@ foreach ($m in $mutations) {
       continue
     }
     $m.qi.starred = $true
-    $starCount++
-    $dayCount++
-    Start-Sleep -Milliseconds $starInterval
+    if ([int]$sr.status -eq 304) {
+      # 304 = already starred: idempotent no-op, does not consume scan/day quota
+      Write-JoyLog ("star no-op (304 already starred): {0}" -f $m.qi.fullName) 'WARN'
+    } else {
+      $starCount++
+      $dayCount++
+      Start-Sleep -Milliseconds $starInterval
+    }
   }
 
   $nodeId = [string]$m.qi.repo.nodeId

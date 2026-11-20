@@ -189,9 +189,10 @@ mutation($item: ID!, $lists: [ID!]!) {
 
 function Add-JoyStar {
   param([string]$Token, [string]$FullName, [string]$Proxy)
-  $uri = 'https://api.github.com/user/starred/' + ($FullName -replace '/', '/')
+  $uri = 'https://api.github.com/user/starred/' + $FullName
   $r = Invoke-JoyEmptyPut -Uri $uri -Headers (New-JoyApiHeaders $Token) -Proxy $Proxy
   if ($r.ok) { return @{ ok = $true; status = $r.status; error = $null } }
+  # 304 = already starred (idempotent no-op); 302 = redirect, treat as ok too
   if ($r.status -in @(302, 304)) { return @{ ok = $true; status = $r.status; error = $null } }
   return $r
 }
@@ -217,10 +218,19 @@ function Get-JoyStarredMap {
     }
     if ($parts.Count -eq 0) { continue }
     $q = 'query { ' + ($parts -join ' ') + ' }'
-    $r = Invoke-JoyGraphQL -Token $Token -Query $q -Proxy $Proxy
-    if (-not $r.ok) {
+    $r = $null
+    for ($att = 1; $att -le 2; $att++) {
+      $r = Invoke-JoyGraphQL -Token $Token -Query $q -Proxy $Proxy
+      if ($r.ok) { break }
+      if ($att -lt 2) {
+        Write-JoyLog ("star filter batch failed, retrying: " + [string]$r.error) 'WARN'
+        Start-Sleep -Seconds 2
+      }
+    }
+    if (-not $r -or -not $r.ok) {
+      # count as unknown; caller will treat these as un-starred (idempotent PUT handles it)
       $errors += $chunk.Count
-      Write-JoyLog ("star filter batch failed: " + [string]$r.error) 'WARN'
+      Write-JoyLog ("star filter batch failed after retry: " + [string]$r.error) 'WARN'
       continue
     }
     for ($j = 0; $j -lt $n; $j++) {

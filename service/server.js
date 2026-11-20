@@ -579,6 +579,16 @@ function pipelineView() {
   return { active: !!pipeline.active, stage: pipeline.stage, jobId: pipeline.jobId };
 }
 
+function runCleanup() {
+  // fire-and-forget artifact pruning; never blocks the job slot
+  try {
+    spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass',
+      '-File', path.join(ROOT, 'scripts', 'cleanup.ps1')], {
+      stdio: 'ignore', windowsHide: true, env: childEnv(),
+    });
+  } catch (_) { /* cleanup is best-effort */ }
+}
+
 async function advancePipeline(finished, res) {
   if (!pipeline || !pipeline.active || pipeline.jobId !== finished.id) return;
 
@@ -625,6 +635,7 @@ async function advancePipeline(finished, res) {
   if (finished.kind === 'migrate') {
     pipeline.active = false;
     console.log('[joy] pipeline: complete');
+    runCleanup();
   }
 }
 
@@ -794,6 +805,7 @@ async function startScan(dryRun) {
     }
     if (code !== 0 && !job.error) job.error = 'exit_' + code;
     job.state = (code === 0 && !(res && res.ok === false)) ? 'succeeded' : 'failed';
+    if (job.state === 'succeeded' && !dryRun) runCleanup();
     statusCache.value = null; listsCache.value = null; listsCache.at = 0;
     persistJob();
   });

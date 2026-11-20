@@ -260,25 +260,38 @@ if (-not $NoIndex) {
   $entries = @($entry) + @($entries | Where-Object { [string]$_.file -ne $name })
   Write-JoyJsonFile $idxPath $entries
 
-  $rows = New-Object Text.StringBuilder
   $sorted = @($entries | Sort-Object { [string]$_.createdAt } -Descending)
-  foreach ($e in $sorted) {
-    $when = [string]$e.createdAt
-    try { $when = ([datetime]$e.createdAt).ToLocalTime().ToString('yyyy-MM-dd HH:mm') } catch { }
-    [void]$rows.Append('<tr><td><a href="' + (ConvertTo-JoyHtml ([string]$e.file)) + '">' + (ConvertTo-JoyHtml ([string]$e.file)) + '</a></td>')
-    [void]$rows.Append('<td>' + [int]$e.count + '</td>')
-    [void]$rows.Append('<td>' + (ConvertTo-JoyHtml $when) + '</td></tr>')
-  }
 
   $idxTpl = [IO.File]::ReadAllText((Join-Path $root 'templates\index.html.tpl'), [Text.Encoding]::UTF8)
-  $idxHtml = $idxTpl.Replace('{{TITLE}}', (ConvertTo-JoyHtml $L.indexTitle))
-  $idxHtml = $idxHtml.Replace('{{SUBTITLE}}', (ConvertTo-JoyHtml $L.indexSubtitle))
-  $idxHtml = $idxHtml.Replace('{{ROWS}}', $rows.ToString())
-  $idxHtml = $idxHtml.Replace('{{FOOTER}}', (ConvertTo-JoyHtml ($L.indexFooterTpl.Replace('{count}', [string]$sorted.Count))))
-  $idxFile = Join-Path $OutDir 'index.html'
-  Write-JoyTextFile $idxFile $idxHtml
-  $script:Result.indexFile = $idxFile
-  Write-JoyLog ("index written: {0}" -f $idxFile)
+
+  # two outputs: reports/index.html (links relative to itself) and the repo-root
+  # index.html (links prefixed with 'reports/', serves as the Pages homepage).
+  foreach ($prefix in @('', 'reports/')) {
+    $rows = New-Object Text.StringBuilder
+    if ($prefix) {
+      [void]$rows.Append('<tr><td><a href="reports/latest.html">' + (ConvertTo-JoyHtml ([string]$L.latestFile)) + '</a> <span class="muted">(' + (ConvertTo-JoyHtml ([string]$L.latestLabel)) + ')</span></td><td>&mdash;</td><td>&mdash;</td></tr>')
+    }
+    foreach ($e in $sorted) {
+      $when = [string]$e.createdAt
+      try { $when = ([datetime]$e.createdAt).ToLocalTime().ToString('yyyy-MM-dd HH:mm') } catch { }
+      [void]$rows.Append('<tr><td><a href="' + (ConvertTo-JoyHtml ($prefix + [string]$e.file)) + '">' + (ConvertTo-JoyHtml ([string]$e.file)) + '</a></td>')
+      [void]$rows.Append('<td>' + [int]$e.count + '</td>')
+      [void]$rows.Append('<td>' + (ConvertTo-JoyHtml $when) + '</td></tr>')
+    }
+    $idxHtml = $idxTpl.Replace('{{TITLE}}', (ConvertTo-JoyHtml $L.indexTitle))
+    $idxHtml = $idxHtml.Replace('{{SUBTITLE}}', (ConvertTo-JoyHtml $L.indexSubtitle))
+    $idxHtml = $idxHtml.Replace('{{ROWS}}', $rows.ToString())
+    $idxHtml = $idxHtml.Replace('{{FOOTER}}', (ConvertTo-JoyHtml ($L.indexFooterTpl.Replace('{count}', [string]$sorted.Count))))
+    if ($prefix) {
+      $idxFile = Join-Path $root 'index.html'
+    } else {
+      $idxFile = Join-Path $OutDir 'index.html'
+      $script:Result.indexFile = $idxFile
+    }
+    Write-JoyTextFile $idxFile $idxHtml
+    Write-JoyLog ("index written: {0}" -f $idxFile)
+  }
+  $script:Result.rootIndexFile = Join-Path $root 'index.html'
 }
 
 $script:Result.ok = $true

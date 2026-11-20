@@ -24,6 +24,13 @@
     "treeMaxEntries": 200,
     "keyFilesMin": 3,
     "keyFilesMax": 5,
-    "keyFileMaxChars": 8000
+    "keyFileMaxChars": 8000,
+    "maxInputChars": 70000
+  },
+  "retention": {
+    "jobDays": 30,
+    "logDays": 90,
+    "trendingDays": 90,
+    "keepJobs": 20
   }
 }

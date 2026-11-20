@@ -127,7 +127,7 @@ Write-JoyLog ("token source={0} proxy={1}" -f $tok.source, $(if ($proxy) { $prox
 $readCfg = $null
 if ($cfg.PSObject.Properties.Name -contains 'read') { $readCfg = $cfg.read }
 $defaultN = 5; $maxN = 20; $deepMode = $true
-$readmeMax = 20000; $treeMax = 200; $keyMin = 3; $keyMax = 5; $keyFileMax = 8000
+$readmeMax = 20000; $treeMax = 200; $keyMin = 3; $keyMax = 5; $keyFileMax = 8000; $maxInputChars = 70000
 if ($readCfg) {
   if ($readCfg.PSObject.Properties.Name -contains 'defaultN') { $defaultN = [int]$readCfg.defaultN }
   if ($readCfg.PSObject.Properties.Name -contains 'maxN') { $maxN = [int]$readCfg.maxN }
@@ -137,6 +137,7 @@ if ($readCfg) {
   if ($readCfg.PSObject.Properties.Name -contains 'keyFilesMin') { $keyMin = [int]$readCfg.keyFilesMin }
   if ($readCfg.PSObject.Properties.Name -contains 'keyFilesMax') { $keyMax = [int]$readCfg.keyFilesMax }
   if ($readCfg.PSObject.Properties.Name -contains 'keyFileMaxChars') { $keyFileMax = [int]$readCfg.keyFileMaxChars }
+  if ($readCfg.PSObject.Properties.Name -contains 'maxInputChars') { $maxInputChars = [int]$readCfg.maxInputChars }
 }
 if ($Lite) { $deepMode = $false }
 $script:Result.mode = $(if ($deepMode) { 'deep' } else { 'lite' })
@@ -534,6 +535,39 @@ foreach ($item in $wanted) {
     $entry.materials.treeEntries = $paths.Count
     $entry.materials.files = $keyPaths
     Write-JoyLog ("materials {0}: readme={1} tree={2} files={3}" -f $full, $readmeText.Length, $paths.Count, $keyPaths.Count)
+
+    # total input budget: trim lowest-value material first (files tail -> tree
+    # tail -> README tail) and record what was dropped in warnings.
+    if (-not $NoLlm -and $maxInputChars -gt 0) {
+      $total = $readmeText.Length + $treeText.Length + $filesBlock.Length
+      if ($total -gt $maxInputChars) {
+        $over = $total - $maxInputChars
+        Write-JoyLog ("input budget: {0} chars over {1}; trimming" -f $total, $maxInputChars) 'WARN'
+        if ($filesBlock.Length -gt 0 -and $over -gt 0) {
+          $drop = [Math]::Min($filesBlock.Length, $over)
+          $keep = $filesBlock.Length - $drop
+          $over -= $drop
+          if ($keep -gt 0) { $filesBlock = $filesBlock.Substring(0, $keep) } else { $filesBlock = '' }
+          $warnings += ('input_truncated: files -' + $drop + ' chars')
+        }
+        if ($over -gt 0 -and $treeText.Length -gt 0) {
+          $drop = [Math]::Min($treeText.Length, $over)
+          $keep = $treeText.Length - $drop
+          $over -= $drop
+          if ($keep -gt 0) { $treeText = $treeText.Substring(0, $keep) } else { $treeText = '' }
+          $warnings += ('input_truncated: tree -' + $drop + ' chars (tail lines dropped)')
+        }
+        if ($over -gt 0 -and $readmeText.Length -gt 0) {
+          $drop = [Math]::Min($readmeText.Length, $over)
+          $keep = $readmeText.Length - $drop
+          $over -= $drop
+          if ($keep -gt 0) { $readmeText = $readmeText.Substring(0, $keep) } else { $readmeText = '' }
+          $warnings += ('input_truncated: readme -' + $drop + ' chars (tail dropped)')
+        }
+        if ($over -gt 0) { $warnings += ('input_truncated: still {0} chars over budget' -f $over) }
+        $warnings += ('input_budget: {0} -> {1} chars (max {2})' -f $total, ($readmeText.Length + $treeText.Length + $filesBlock.Length), $maxInputChars)
+      }
+    }
 
     if ($NoLlm) {
       $entry.status = 'materials'

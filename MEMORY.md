@@ -209,11 +209,34 @@ LLM 连通策略：直连优先 + 代理回退（2026-11-20）：
 - `lib/llm.ps1 Invoke-JoyLlmChat`：直连优先（**完整超时**，防止误杀慢而正常的响应→重复计费），`status=0`（网络层失败）且配置了代理时重试一次（WARN 日志）；HTTP 错误不回退。read.ps1 两个调用点（主总结 + JSON 修复）自动受益；GitHub API 调用维持原状（始终走代理，api.github.com 实测直连正常但保持一致性）。
 - 实测：`llm-probe.ps1` 直连成功（未触发回退）；服务重启后 `/api/llm/test` 返回 `via:"direct"` 453ms/200；`.work/test-via-proxy.js` 经 127.0.0.1:10808 CONNECT 隧道打真实模型 200（验证隧道分支）；`node --check` 与 PS 解析均 0 错误。
 
+运行产物自动清理（2026-11-20）：
+- 新增 `scripts/cleanup.ps1`（纯 ASCII、-DryRun/-JsonOut、规则走 `config.json` 新增 `retention{jobDays:30, logDays:90, trendingDays:90, keepJobs:20}`）：jobs/ids 按「最新 20 个且 30 天内」保留，logs 90 天，trending 90 天，.work 30 天，`dry*.json`/`scan-real*.json`/`queue.before-clear-*.json`/`last-llm-raw.txt` 视为一次性调试产物总是删除；永不触碰 summaries/reports-index/state/queue/service 文件。
+- `server.js` 新增 `runCleanup()`（fire-and-forget spawn，不占任务槽）：扫描真实成功后、阅读流水线 migrate 完成后自动触发。
+- RUNBOOK 7.6 改写为自动 + 手动两用说明；DESIGN 目录树与附录同步。
+- 一次性清理：删除 `data/dry*.json`、`scan-real1.json`、`queue.before-clear-*.json`、`.work/*`（eval 脚本）、`logs/scan-dry2.*`；jobs 剪到最新 20 个。实测 cleanup DryRun 输出与预期一致后真实执行。
+
+根 index.html 自动生成（2026-11-20）：
+- 背景：仓库根 `index.html`（Pages 首页）原为手工维护的静态归档页，与 render 生成的 `reports/index.html` 双源，只列了 1 条且必然漂移。
+- 修改：`render.ps1` 渲染索引时按前缀循环产出两份——`reports/index.html`（链接相对自身）与根 `index.html`（链接带 `reports/` 前缀，顶部加「最新一期 latest.html」入口，文案走 `labels.json` 新键 `latestFile/latestLabel`）；`publish.ps1` 把根 index 纳入提交清单（`copied` 列表用 `^` 前缀标记仓库根文件，DryRun 亦提示），缺失时 WARN 提示先跑 render。
+- 实测：render -N 1 生成双索引（根页含 `reports/` 前缀与 latest 行、内页无前缀），验证后已还原测试产物；publish -DryRun 列出 root index；Parser/`node --check` 全过。
+
+read 输入总预算实装（2026-11-20）：
+- 背景：DESIGN 5.3 声称的 `llm.maxInputChars`（70k 总预算截断）从未实现，且配置收敛时 `llm` 段被整体删除——单项截断（README 20k / 树 200 行 / 关键文件 5×8k）之外，拼装 prompt 无总上限，极端材料可达 80k+ 字符。
+- 修改：`config.json` read 段新增 `maxInputChars: 70000`；`read.ps1` 在材料拼装后、调 LLM 前按「关键文件尾部 → 树尾部 → README 尾部」顺序裁剪到预算内，逐项记入 `warnings[]`（`input_truncated: files/tree/readme -N chars`、`input_budget: total -> final`），日志同步 WARN；`-NoLlm` 时跳过（不调模型无需裁剪）。
+- 踩坑：首版误用 PS7 三元运算符（`? :`），PS 5.1 解析会失败——已改写为 if/else 并修正告警数字（先记 drop 再截串）。
+- 实测：Parser 0 错误；干跑正常；裁剪算法用 2000/500/1000 chars 合成样例验证（files 削 3000 → 预算内，README 完整保留）。
+
 read 部分成功语义修正（2026-11-20）：
 - 背景：`advancePipeline` 对 read 只看 `items` 中 `status=done` 的条目（≥1 即继续 render→publish→migrate，全 0 才停），不看 job 状态；而 `read.ps1` 把单条失败（含 404）计入 `failed` → exit 5 → 页面显示红色 failed，与"实际已继续发布"矛盾。
 - 修改：`read.ps1` 的 404 分支改计 `Result.gone`（不再计入 failed，日志与结果均含 gone 数）；真实运行时对 gone 条目自动 `DELETE /user/starred/<full>`（unstar）——GitHub 会把未 star 的仓库从 Star Lists 剔除，从而把死项目清出 unread，避免每轮重复 404；unstar 失败仅告警。
 - `server.js`：read 任务「退出码非 0 但 `succeeded>0`」时 job.state 置 `partial`（新增琥珀色 `.tag.partial` 样式），app.js 进度文案显示「消失 n」与「部分成功，已继续渲染发布」；render/publish/migrate 的 `state!=='succeeded'` 停止逻辑不变（read 分支本就不受该检查约束）。
 - 实测：read.ps1 解析 0 错误、`-DryRun -N 2` 正常（未触发 gone 分支）；server/app `node --check` 通过。
+
+star 修复三连（2026-11-20）：
+- `Add-JoyStar`（lib/github.ps1）：删除 URL 拼接里的无操作替换 `-replace '/', '/'`（残留写错，恰好无害）。
+- `scan.ps1` star 循环：PUT 返回 **304（已 star，幂等）**时置 `starred=true` 但**不再 `starCount++`/`dayCount++`**，也不做 1s 间隔 sleep——304 不再虚耗「本轮 ≤25 / 每日 ≤100」配额；日志记 `star no-op (304 already starred)`。
+- `Get-JoyStarredMap`：批量 GraphQL 查询失败时**先重试一次**（间隔 2s）再判失败，减少「整批按未 star 处理 → 重复 PUT」的概率；仍失败时维持旧行为（按未 star 处理，幂等 PUT 兜底）。
+- 实测：`scan.ps1 -DryRun` 全链路通过（exit 0、star filter 正常、候选 49 / 选中 11 / starred=1 过滤命中）；PS Parser 0 错误。
 
 文档同步 v1.3（2026-11-20）：
 - 三件套 + README + AGENTS 全量对齐实际实现：版本头改为「M1–M4c 已上线」；移除所有不存在的开关（`-NoPublish` / `-NoMark` / `-Repair` / `-RepairStar`），替换为实际的 `-DryRun` / `-NoWrite` / `-NoLlm` / `-NoPush` / `-NoStar`；
