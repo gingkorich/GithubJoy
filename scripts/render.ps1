@@ -120,14 +120,25 @@ if ($OnlyId -or $IdsFile) {
     }
   }
 } elseif ($RunId) {
-  $candidates = @($items | Where-Object { [string]$_.readRunId -eq $RunId })
+  $candidates = @()
+  foreach ($sf in @(Get-ChildItem -LiteralPath $sumDir -Filter '*.json' -ErrorAction SilentlyContinue)) {
+    $tmp = Read-JoyJsonFile $sf.FullName
+    if ($tmp -and [string]$tmp.readRunId -eq $RunId) {
+      $candidates += [pscustomobject]@{ id = [string]$tmp.id; fullName = [string]$tmp.fullName; summaryPath = $sf.FullName; repo = $null }
+    }
+  }
 } else {
   $take = $N
   if ($take -le 0) { $take = 5 }
-  $done = @($items | Where-Object {
-      [string]$_.status -eq 'done' -and $_.summaryPath -and (Test-Path -LiteralPath ([string]$_.summaryPath))
-    })
-  $candidates = @($done | Sort-Object { (Get-Item -LiteralPath ([string]$_.summaryPath)).LastWriteTime } -Descending | Select-Object -First $take)
+  $files = @(Get-ChildItem -LiteralPath $sumDir -Filter '*.json' -ErrorAction SilentlyContinue |
+      Sort-Object LastWriteTime -Descending | Select-Object -First $take)
+  $candidates = @()
+  foreach ($sf in $files) {
+    $tmp = Read-JoyJsonFile $sf.FullName
+    if ($tmp -and $tmp.fullName) {
+      $candidates += [pscustomobject]@{ id = [string]$tmp.id; fullName = [string]$tmp.fullName; summaryPath = $sf.FullName; repo = $null }
+    }
+  }
 }
 
 $selected = @()
@@ -169,10 +180,10 @@ foreach ($sel in $selected) {
 
   [void]$cards.Append('<article class="card">')
   [void]$cards.Append('<h2><a href="' + $url + '" target="_blank" rel="noopener">' + (ConvertTo-JoyHtml $full) + '</a>')
-  if ($s.stack -and $s.stack.language) {
-    [void]$cards.Append('<span class="tag">' + (ConvertTo-JoyHtml ([string]$s.stack.language)) + '</span>')
-  }
-  [void]$cards.Append('<span class="tag">' + (ConvertTo-JoyHtml $mode) + '</span>')
+  $stars = 0
+  if ($s.PSObject.Properties.Name -contains 'stars') { $stars = [int]$s.stars }
+  $starsText = '{0:N0}' -f $stars
+  [void]$cards.Append('<span class="tag">&#9733; ' + $starsText + '</span>')
   [void]$cards.Append('</h2>')
   [void]$cards.Append('<p class="overview">' + (ConvertTo-JoyHtml ([string]$s.overview)) + '</p>')
 
@@ -194,27 +205,6 @@ foreach ($sel in $selected) {
     }
     [void]$cards.Append('</section>')
   }
-
-  $stackParts = @()
-  if ($s.stack) {
-    if ($s.stack.language) { $stackParts += [string]$s.stack.language }
-    if ($s.stack.frameworks -and @($s.stack.frameworks).Count -gt 0) { $stackParts += (@($s.stack.frameworks) -join ', ') }
-    if ($s.stack.build) { $stackParts += ([string]$s.stack.build) }
-  }
-  $stackHtml = '<span class="muted">&mdash;</span>'
-  if ($stackParts.Count -gt 0) { $stackHtml = ConvertTo-JoyHtml ($stackParts -join ' / ') }
-
-  [void]$cards.Append('<dl class="meta">')
-  [void]$cards.Append('<dt>' + $L.metaStack + '</dt><dd>' + $stackHtml + '</dd>')
-  [void]$cards.Append('<dt>' + $L.metaUse + '</dt><dd>' + (ConvertTo-JoyList $s.useCases) + '</dd>')
-  [void]$cards.Append('<dt>' + $L.metaRisk + '</dt><dd>' + (ConvertTo-JoyList $s.risks) + '</dd>')
-  $srcCount = 0
-  if ($s.sources) { $srcCount = @($s.sources).Count }
-  $treeCount = 0
-  if ($s.tree) { $treeCount = [int]$s.tree.entries }
-  $fetchNote = $L.fetchTpl.Replace('{mode}', $mode).Replace('{sources}', [string]$srcCount).Replace('{tree}', [string]$treeCount)
-  [void]$cards.Append('<dt>' + $L.metaFetch + '</dt><dd>' + (ConvertTo-JoyHtml $fetchNote) + '</dd>')
-  [void]$cards.Append('</dl>')
 
   $warn = @($s.warnings | Where-Object { $_ })
   if ($warn.Count -gt 0) {

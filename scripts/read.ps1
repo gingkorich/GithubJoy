@@ -397,7 +397,7 @@ function Test-JoySummary($Obj, [string[]]$AllowedPaths) {
     $errors += 'overview missing'
   } else {
     $len = $overview.Length
-    if ($len -lt 80 -or $len -gt 150) { $warnings += ("overview length " + $len) }
+    if ($len -lt 150 -or $len -gt 300) { $warnings += ("overview length " + $len) }
   }
 
   $allowed = @{}
@@ -428,17 +428,6 @@ function Test-JoySummary($Obj, [string[]]$AllowedPaths) {
   }
   if ($qaOut.Count -lt 3) { $errors += ('valid qa count ' + $qaOut.Count + ' < 3') }
 
-  $stack = [ordered]@{ language = ''; frameworks = @(); build = '' }
-  if ($Obj.PSObject.Properties.Name -contains 'stack' -and $Obj.stack) {
-    if ($Obj.stack.PSObject.Properties.Name -contains 'language') { $stack.language = [string]$Obj.stack.language }
-    if ($Obj.stack.PSObject.Properties.Name -contains 'frameworks') { $stack.frameworks = @($Obj.stack.frameworks) }
-    if ($Obj.stack.PSObject.Properties.Name -contains 'build') { $stack.build = [string]$Obj.stack.build }
-  }
-  $useCases = @()
-  if ($Obj.PSObject.Properties.Name -contains 'useCases') { $useCases = @($Obj.useCases) }
-  $risks = @()
-  if ($Obj.PSObject.Properties.Name -contains 'risks') { $risks = @($Obj.risks) }
-
   $bad = @()
   $clichePath = Join-Path $PSScriptRoot 'prompts\cliches.txt'
   if (Test-Path -LiteralPath $clichePath) {
@@ -451,9 +440,6 @@ function Test-JoySummary($Obj, [string[]]$AllowedPaths) {
   $normalized = [ordered]@{
     overview = $overview
     qa = $qaOut
-    stack = $stack
-    useCases = $useCases
-    risks = $risks
   }
   return @{ ok = ($errors.Count -eq 0); errors = $errors; warnings = $warnings; obj = $normalized }
 }
@@ -617,9 +603,7 @@ foreach ($item in $wanted) {
       mode = $script:Result.mode
       overview = $final.overview
       qa = $final.qa
-      stack = $final.stack
-      useCases = $final.useCases
-      risks = $final.risks
+      stars = [int]$m.stargazers_count
       sources = $sources
       tree = [ordered]@{ entries = $paths.Count; truncated = [bool]$tree.truncated }
       model = $llm.Model

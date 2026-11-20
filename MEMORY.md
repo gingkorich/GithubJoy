@@ -210,7 +210,13 @@ M2 扫描（2026-11-19，DryRun 通过）：
 - 真实 migrate 迁移 4 条（chronytop + n3 三条），unread 60→56、read 0→4，快照 `data/state/lists-migrate-20261119-182132.json`；
 - Pages 已构建：`https://gingkorich.github.io/GithubJoy/` 200，`2026-11-19-n3.html` 15301 字节（含 cursor/plugins 与 overview/Q&A）。
 
-发布目录调整（2026-11-19）：
+报告文案风格调整（2026-11-20）：
+- overview 改为 **150–350 字通俗长段落**（讲清是什么、给谁用、能做什么、有何特别），qa 只讲关键实现方式；
+- 移除 `stack` / `useCases` / `risks` 字段与页面区块；卡片只显示 **★ star、overview、问答**（2026-11-19 用户要求）；
+- summary 新增 `stars`（来自仓库元数据）；render 读取并千分位格式化；旧 summary 无该字段时显示 ★ 0；
+- `render.ps1 -N` 改为从 `data/summaries/` 按修改时间取最近 N 份（队列已临时化，不再作为来源）；
+- 实测：NoWrite 阅读 openvinotoolkit/openvino → overview 334 字、qa 5 组；合成 summary `stars=1234` → 卡片显示 `★ 1,234`、无 meta 区块。
+- 注意：2026-11-20 观察到 GitHub 上 unread 54→38、read 6→0，本轮代码只做了 NoWrite 阅读（不写远端），判断为外部操作或列表变更，需用户确认。
 - `reports/` 纳入 git（从 `.gitignore` 移除），`docs/` 只保留 `.md`，不再放 HTML；
 - Pages 源改为**仓库根 `/`**：根 `.nojekyll` + 根 `index.html` 跳转到 `reports/latest.html`；页面地址变为 `/reports/<file>`；
 - `publish.ps1` 改为直接提交 `reports/*.html` 与根 `.nojekyll`，不再复制到 `docs/`；`reports-index` 的 `url` 同步为 `.../reports/<file>`；

@@ -190,15 +190,13 @@ D:\AIproject\GithubJoy\
   "version": 1,
   "id": "owner/name",
   "mode": "deep",
-  "overview": "一段话，80–150 字……",
+  "overview": "一段通俗的话，150–350 字……",
   "qa": [
     { "q": "入口与整体调用链是怎样的？",
       "a": "……",
       "refs": ["cmd/main.go", "internal/app/run.go"] }
   ],
-  "stack": { "language": "Go", "frameworks": ["cobra"], "build": "go build ./cmd/main" },
-  "useCases": ["……"],
-  "risks": ["……"],
+  "stars": 17385,
   "sources": [
     { "path": "README.md", "chars": 12345, "truncated": false },
     { "path": "cmd/main.go", "chars": 8123, "truncated": false }
@@ -439,10 +437,7 @@ deep: 取 top 3–5；lite: 取 0
 ```json
 {
   "overview": "…",
-  "qa": [{ "q": "…", "a": "…", "refs": ["src/a.ts"] }],
-  "stack": { "language": "…", "frameworks": ["…"], "build": "…" },
-  "useCases": ["…"],
-  "risks": ["…"]
+  "qa": [{ "q": "…", "a": "…", "refs": ["src/a.ts"] }]
 }
 ```
 
@@ -451,7 +446,7 @@ deep: 取 top 3–5；lite: 取 0
 | 规则 | 处理 |
 |---|---|
 | JSON 可解析（去 ``` 围栏、取首 `{` 到末 `}`、容忍 BOM） | 失败 → 修复重试 1 次 |
-| `overview` 为字符串、80–150 字、不含 `- ` / `1. ` 列表标记 | 违规 → 重问并指出违规点 |
+| `overview` 为字符串、150–350 字、不含 `- ` / `1. ` 列表标记 | 违规 → 重问并指出违规点 |
 | `qa` 3–6 组，`q`/`a` 非空，`a` 为 2–4 句 | 违规 → 重问 |
 | `refs` 路径必须存在于 `sources` | 不存在的**直接删除**并写 `warnings`（不重问） |
 | 正文出现 `sources` 外的文件名（正则 `[\w./-]+\.(go|py|ts|js|tsx|jsx|rs|java|rb|php|md|toml|json|yml)`） | 重问一次；仍出现则删除该句并写 `warnings` |
@@ -681,21 +676,17 @@ function ConvertTo-HtmlText([string]$s) {
 
 ```html
 <article class="card">
-  <h2><a href="{repoUrl}">owner/name</a> <span class="lang">Go</span> <span class="stars">★ 1.2k</span></h2>
-  <p class="overview">{overview 一段话}</p>
+  <h2><a href="{repoUrl}">owner/name</a> <span class="tag">&#9733; 17,385</span></h2>
+  <p class="overview">{overview 一段通俗的话}</p>
   <section class="qa">
     <h3>实现逻辑</h3>
-    <details open><summary>Q1 · {问题}</summary><p>{回答}</p></details>
+    <details open><summary>Q1 &middot; {问题}</summary><p>{回答}</p></details>
     …
   </section>
-  <dl class="meta">
-    <dt>技术栈</dt><dd>…</dd>
-    <dt>适用场景</dt><dd><ul><li>…</li></ul></dd>
-    <dt>风险</dt><dd>…</dd>
-    <dt>来源</dt><dd>today #3 · 已读源码 · 抓取 6 个文件</dd>
-  </dl>
 </article>
 ```
+
+- 卡片**只展示**：标题 + ★ star、overview、问答；技术栈 / 适用场景 / 风险 / 抓取信息一律不渲染（2026-11-19 用户要求）。
 
 - 首条 `details` 默认展开，其余折叠；打印时用 `@media print { details > * { display: block } }` 强制全展开。
 - 顶部统计条：日期、n、成功/失败、周期分布、模式、耗时、`source=search` 口径说明。
