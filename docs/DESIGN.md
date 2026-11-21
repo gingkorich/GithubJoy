@@ -498,7 +498,7 @@ publish.ps1 [-DryRun] [-NoPush] [-Message <msg>]
  10. 推送成功后把 reports-index 对应条目标 published=true / pushedAt / url
 ```
 
-- 页面地址：`<baseUrl>/<dir>/<file>`；根 `index.html` 是**站点首页（Pages 首页）**，由 render.ps1 与 `reports/index.html` 同时生成（链接带 `reports/` 前缀并含「最新一期」入口），publish 一并提交——不再是手工维护文件。
+- 页面地址：`<baseUrl>/<dir>/<file>`；根 `index.html` 是**站点首页（Pages 首页）**，由 render.ps1 与 `reports/index.html` 同时生成（链接带 `reports/` 前缀），publish 一并提交——不再是手工维护文件。
 
 - **禁止** `git add -A`；`git status --porcelain` 中与本轮无关的改动只提示、不提交。
 - 推送后不等待 Pages 构建（通常 10–60 秒）；index 条目记录 `pushedAt`，页面文案只写「已推送」不写「已上线」。
@@ -643,7 +643,7 @@ summaries/*.json（渲染唯一输入；-N 取最近修改的 N 份，或 -OnlyI
 data/reports-index.json  ◀── 追加本轮条目
         │
         ▼  templates/report.html.tpl + index.html.tpl + labels.json（中文文案外置）
-reports/<yyyyMMddHHmmss>.html（生成时刻，精确到秒；同一秒冲突时追加 `-1`、`-2`…）、reports/latest.html、reports/index.html、根 index.html（站点首页，链接带 reports/ 前缀 + 最新一期入口，与 reports/index.html 同源生成）
+reports/<yyyyMMddHHmmss>.html（生成时刻，精确到秒；同一秒冲突时追加 `-1`、`-2`…）、reports/index.html、根 index.html（站点首页，链接带 reports/ 前缀，与 reports/index.html 同源生成；不生成 latest.html 别名）
 ```
 
 > 注：queue.json 不再作为渲染输入（队列是运行期草稿，read 结束即清空）。

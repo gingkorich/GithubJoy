@@ -36,7 +36,7 @@ $script:Result = [ordered]@{
   ok = $false; runId = $runTag
   startedAt = $started.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
   durationMs = 0; count = 0; qaTotal = 0
-  file = $null; latest = $null; indexFile = $null
+  file = $null; indexFile = $null
   skipped = @(); error = $null
 }
 
@@ -235,10 +235,7 @@ while (Test-Path -LiteralPath $file) {
   $seq++
 }
 Write-JoyTextFile $file $html
-$latest = Join-Path $OutDir 'latest.html'
-Copy-Item -LiteralPath $file -Destination $latest -Force
 $script:Result.file = $file
-$script:Result.latest = $latest
 $script:Result.count = $selected.Count
 $script:Result.qaTotal = $qaTotal
 Write-JoyLog ("report written: {0}" -f $file)
@@ -267,9 +264,6 @@ if (-not $NoIndex) {
   # index.html (links prefixed with 'reports/', serves as the Pages homepage).
   foreach ($prefix in @('', 'reports/')) {
     $rows = New-Object Text.StringBuilder
-    if ($prefix) {
-      [void]$rows.Append('<tr><td><a href="reports/latest.html">' + (ConvertTo-JoyHtml ([string]$L.latestFile)) + '</a> <span class="muted">(' + (ConvertTo-JoyHtml ([string]$L.latestLabel)) + ')</span></td><td>&mdash;</td><td>&mdash;</td></tr>')
-    }
     foreach ($e in $sorted) {
       $when = [string]$e.createdAt
       try { $when = ([datetime]$e.createdAt).ToLocalTime().ToString('yyyy-MM-dd HH:mm') } catch { }

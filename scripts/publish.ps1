@@ -113,7 +113,6 @@ foreach ($e in $pending) {
   }
   $files += [string]$e.file
 }
-$files += 'latest.html'
 $files += 'index.html'
 $files = @($files | Select-Object -Unique)
 

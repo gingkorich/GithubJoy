@@ -15,7 +15,5 @@
   "published": "已发布",
   "indexTitle": "GitHub Joy · 简报归档",
   "indexSubtitle": "历史简报（按生成时间倒序）",
-  "indexFooterTpl": "GitHub Joy · 共 {count} 份报告 · 页面自包含",
-  "latestFile": "latest.html",
-  "latestLabel": "最新一期"
+  "indexFooterTpl": "GitHub Joy · 共 {count} 份报告 · 页面自包含"
 }

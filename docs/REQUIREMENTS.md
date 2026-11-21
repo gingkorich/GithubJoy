@@ -226,7 +226,6 @@ GitHub Joy 把这件事做成一条流水线：
 
 - 产物：
   - `reports/<yyyyMMddHHmmss>.html`：本次简报，文件名为生成时刻（本地时间，精确到秒）；同一秒冲突时追加 `-1`、`-2`；
-  - `reports/latest.html`：最近一次简报（同内容）；
   - `reports/index.html`：归档索引，按日期倒序列出历史页面；
   - 同日多次运行**不覆盖**已有文件（追加时间后缀），索引每条都可点开；
 - 页面结构：
@@ -257,7 +256,7 @@ GitHub Joy 把这件事做成一条流水线：
 > 已确认（2026-11-19）：发布到**当前 `GithubJoy` 仓库**的 `docs/`、`main` 分支；仓库需设为 **public**（免费账号的 Pages 要求）。
 
 - 配置：`publish.repo` = 本仓库（`owner/GithubJoy`）、`branch=main`、`dir=docs/`、`url=https://<login>.github.io/GithubJoy/`；
-- 发布时把本轮产物从 `reports/` 复制到 `docs/`：`index.html`（归档索引）、`<yyyy-MM-dd>-n<n>.html`、`latest.html`；**必须提交 `docs/.nojekyll`**，避免 Jekyll 处理改写文件；
+- 发布时把本轮产物从 `reports/` 复制到 `docs/`：`index.html`（归档索引）、`<yyyy-MM-dd>-n<n>.html`；不生成 `latest.html` 别名；**必须提交 `docs/.nojekyll`**，避免 Jekyll 处理改写文件；
 - 与文档共存：`docs/REQUIREMENTS.md` 等继续保留；生成器只写 HTML，不改动 `.md`；
 - 只提交生成的页面：`git add` 明确列出 `docs/*.html` 与 `docs/.nojekyll`，**禁止 `git add -A`**；`data/`、`reports/`、`.work/`、`gh.json`、`llm.json` 永不提交；
 - 推送前检查：工作区存在与本轮无关的未提交改动时提示用户，不自动 stash / commit；

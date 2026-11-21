@@ -461,7 +461,7 @@ git log --oneline main..origin/main     # 远端领先（需要先 pull）
 **只提交页面文件的正确姿势**（脚本内部就是这样做的）：
 
 ```powershell
-git add -- reports/2026-11-19-n5.html reports/latest.html reports/index.html .nojekyll
+git add -- reports/2026-11-19-n5.html reports/index.html .nojekyll
 git status --short          # 确认只有 reports/ 下这些文件与根 .nojekyll
 git commit -m "joy: 2026-11-19 n=5"
 git push origin main
@@ -824,7 +824,7 @@ git pull --ff-only
 | 调模型但不写盘 | `.\run-joy.bat -OnlyId owner/name -Lite -NoWrite` |
 | 渲染最近 5 条 | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render.ps1 -N 5` |
 | 渲染指定项目 | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render.ps1 -OnlyId owner/name` |
-| 预览报告 | 打开 `reports\latest.html` |
+| 预览报告 | 打开 `reports\index.html`（第一行即最新一期） |
 | 发布干跑 | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish.ps1 -DryRun` |
 | 发布（只本地提交、不推送） | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish.ps1 -NoPush` |
 | 发布（真实推送） | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish.ps1` |
@@ -850,7 +850,7 @@ git pull --ff-only
 | `gh.json` / `llm.json` | 凭据 | **否** |
 | `service/` / `scripts/` / `templates/` | 代码 | 是 |
 | `data/` | 运行期数据（queue/state/summaries/jobs；queue 为临时工作集） | 否 |
-| `reports/` | 渲染产物：`<时间戳>.html` + latest.html + index.html | **是**（发布即提交） |
+| `reports/` | 渲染产物：`<时间戳>.html` + index.html（无 latest.html 别名） | **是**（发布即提交） |
 | 根 `index.html` | 站点首页：render 自动生成（同 reports/index.html 数据源，链接带 `reports/` 前缀） | 是 |
 | `docs/*.md` | 文档三件套 | 是 |
 | `logs/` / `.work/` | 日志与中间产物 | 否 |
