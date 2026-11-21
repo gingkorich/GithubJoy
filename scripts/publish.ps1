@@ -16,6 +16,7 @@ try {
 
 . (Join-Path $PSScriptRoot 'lib\config.ps1')
 . (Join-Path $PSScriptRoot 'lib\log.ps1')
+. (Join-Path $PSScriptRoot 'lib\lock.ps1')
 
 $root = Get-JoyRoot
 $dataDir = Join-Path $root 'data'
@@ -45,6 +46,7 @@ function Save-ResultAndExit([int]$Code) {
   if ($JsonOut) { Write-JoyJsonFile $JsonOut $script:Result }
   Write-JoyEvent @{ evt = 'result'; code = $Code; result = $script:Result }
   Write-JoyLog ("publish finished code={0} pushed={1} error={2}" -f $Code, $script:Result.pushed, $script:Result.error)
+  Exit-JoyWorkflowLock
   exit $Code
 }
 
@@ -55,6 +57,9 @@ function Fail-JoyPublish([int]$Code, [string]$Message, [string]$Hint = '') {
   Write-JoyLog ("FAIL: {0}" -f $Message) 'ERROR'
   Save-ResultAndExit $Code
 }
+
+$lock = Enter-JoyWorkflowLock -Kind 'publish'
+if (-not $lock.ok) { Fail-JoyPublish 6 ([string]$lock.error) }
 
 function Set-JoyProp($Obj, [string]$Name, $Value) {
   if ($Obj.PSObject.Properties.Name -contains $Name) {

@@ -26,6 +26,7 @@ try {
 . (Join-Path $PSScriptRoot 'lib\http.ps1')
 . (Join-Path $PSScriptRoot 'lib\github.ps1')
 . (Join-Path $PSScriptRoot 'lib\llm.ps1')
+. (Join-Path $PSScriptRoot 'lib\lock.ps1')
 
 $root = Get-JoyRoot
 $dataDir = Join-Path $root 'data'
@@ -148,6 +149,7 @@ function Save-ResultAndExit([int]$Code) {
   if ($JsonOut) { Write-JoyJsonFile $JsonOut $script:Result }
   Write-JoyEvent @{ evt = 'result'; code = $Code; result = $script:Result }
   Write-JoyLog ("read finished code={0} ok={1} succeeded={2} failed={3}" -f $Code, $script:Result.ok, $script:Result.succeeded, $script:Result.failed)
+  Exit-JoyWorkflowLock
   exit $Code
 }
 
@@ -158,6 +160,9 @@ function Fail-JoyRead([int]$Code, [string]$Message, [string]$Hint = '') {
   Write-JoyLog ("FAIL: {0}" -f $Message) 'ERROR'
   Save-ResultAndExit $Code
 }
+
+$lock = Enter-JoyWorkflowLock -Kind 'read'
+if (-not $lock.ok) { Fail-JoyRead 6 ([string]$lock.error) 'Another GitHub Joy workflow is active; retry after it finishes' }
 
 function Save-Queue($Queue) {
   if ($NoWrite -or $DryRun) { return }

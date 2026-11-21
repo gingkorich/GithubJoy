@@ -19,6 +19,7 @@ try {
 
 . (Join-Path $PSScriptRoot 'lib\config.ps1')
 . (Join-Path $PSScriptRoot 'lib\log.ps1')
+. (Join-Path $PSScriptRoot 'lib\lock.ps1')
 
 $root = Get-JoyRoot
 $dataDir = Join-Path $root 'data'
@@ -47,6 +48,7 @@ function Save-ResultAndExit([int]$Code) {
   if ($JsonOut) { Write-JoyJsonFile $JsonOut $script:Result }
   Write-JoyEvent @{ evt = 'result'; code = $Code; result = $script:Result }
   Write-JoyLog ("render finished code={0} count={1} file={2}" -f $Code, $script:Result.count, $script:Result.file)
+  Exit-JoyWorkflowLock
   exit $Code
 }
 
@@ -55,6 +57,9 @@ function Fail-JoyRender([int]$Code, [string]$Message) {
   Write-JoyLog ("FAIL: {0}" -f $Message) 'ERROR'
   Save-ResultAndExit $Code
 }
+
+$lock = Enter-JoyWorkflowLock -Kind 'render'
+if (-not $lock.ok) { Fail-JoyRender 6 ([string]$lock.error) }
 
 function Write-JoyTextFile([string]$Path, [string]$Text) {
   $dir = Split-Path -Parent $Path

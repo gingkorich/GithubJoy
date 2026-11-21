@@ -2,13 +2,13 @@
 
 | 项目 | 内容 |
 |---|---|
-| 文档版本 | 1.3（对应 REQUIREMENTS v1.3 / DESIGN v1.3） |
-| 更新日期 | 2026-11-20 |
+| 文档版本 | 1.5（对应 REQUIREMENTS v1.5 / DESIGN v1.5） |
+| 更新日期 | 2026-11-21 |
 | 状态 | M1–M4c 已实现并上线（`https://gingkorich.github.io/GithubJoy/`）；本文命令均已实测（个别 ⏳ 为历史标注，可忽略）；M5 的 self-test / `-Repair` 未实现（一致性修复见 7.3） |
 | 读者 | 使用者本人、维护者、接手的 AI 代理 |
 
 > 本手册只讲「怎么做、怎么查、怎么退」。设计原因看 `DESIGN.md`，需求边界看 `REQUIREMENTS.md`。
-> 三件事先记住：**只绑 127.0.0.1**、**发布只提交 `reports/` 下生成的页面（根 `.nojekyll`）**、**任何 token 都不进仓库**。
+> 三件事先记住：**只绑 127.0.0.1**、**发布只提交 `reports/` 下生成的页面（根 `.nojekyll`）**、**任何 token 都不进仓库**。另外，本工具要求 `unread` / `read` 中的仓库不属于其它 Star List。
 
 ---
 
@@ -184,7 +184,7 @@ scanned = added + already_unread + already_read + denied
 ### 3.3 无界面方式
 
 ```powershell
-.\scan.bat                      # 扫描（与控制台互斥，同一时间只能一个）
+.\scan.bat                      # 扫描（与所有写操作入口共用全局工作流锁）
 .\run-joy.bat 5                 # 读 5 个并生成 summary（发布/迁移另见下两行）
 .\run-joy.bat 3 -DryRun         # 干跑：只打印将阅读的条目
 .\run-joy.bat -OnlyId owner/name          # 单条重试
@@ -306,6 +306,7 @@ icacls .\gh.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 |---|---|---|
 | 双击 joy.bat 后窗口一闪而过 | Node 未安装 / 版本过低 / 端口全占用 | 6.1 |
 | 页面打不开、连接被拒绝 | 服务已停 / 端口变了 | 6.1 |
+| 扫描/阅读提示 `workflow_busy` 或退出码 6 | 另一控制台任务或独立脚本正在持有全局工作流锁 | 6.12 |
 | 页面空白、所有按钮 403 | 直接双击了 html 文件，没走服务；或令牌不匹配 | 6.2 |
 | 点登录没反应 / 一直转圈 | R1：gh 在无 TTY 下等待输入 | 6.3 |
 | 登录报 `wsarecv` / `connection attempt failed` | GitHub 直连被阻断，gh 未走代理 | 6.11 |
@@ -407,7 +408,7 @@ gh api graphql -f query='
 ```
 
 > ⚠️ 两个 ID 都是 node ID：仓库 ID 来自 `/repos/{owner}/{repo}` 的 `node_id`，List ID 来自 `viewer.lists`。
-> ⚠️ 这个 mutation 是**整体替换**。手工执行时 `listIds` 必须包含该条目原有的其它 List，否则会把它们从那些 List 里移除（设计 D1 / R3）。
+> ⚠️ 这个 mutation 是**整体替换**。手工执行时 `listIds` 必须包含该条目原有的其它 List，否则会把它们从那些 List 里移除。自动迁移则依赖项目约束：unread/read 项目不加入其它 List；若手工违反此约束，迁移可能移除额外归属（设计 D20）。
 
 ### 6.6 star 没生效 / 数量对不上
 
@@ -422,6 +423,10 @@ gh api graphql -f query='
 ```powershell
 gh api -X PUT /user/starred/<owner>/<repo>
 ```
+
+若 star 状态查询发生错误，扫描才会对状态未知的候选遍历 List 成员；发现候选已在其它 List 时按已收藏跳过，未在任何 List 时才继续 star + 加入 unread。任何 List 查询失败或分页不完整时，该轮会安全失败，不执行这些候选的写入。
+
+若 star 成功但 unread 写入报错，脚本会先重新读取 unread：已在 List 就按成功处理；确认不在后才尝试撤销本轮刚创建的 star。若 PUT 返回 304（之前已 star），不会撤销用户原有 star。查看任务结果中的 `listStateUnknown`、`starRollbackFailed` / `listAddFailed`；状态无法核实或补偿失败时需人工核对 GitHub Star 和 unread。
 
 ### 6.7 阅读失败（LLM 相关）
 
@@ -545,6 +550,18 @@ reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v 
 - `NO_PROXY` 必须包含 `localhost,127.0.0.1`，否则本地服务/探针会被绕进代理。
 - 若代理需要账号密码，不要把带凭据的 URL 提交到仓库。
 
+### 6.12 工作流锁繁忙 / 残留
+
+- `workflow_busy` / 退出码 6 表示另一个控制台任务或独立 PowerShell 入口正在处理共享状态。等它完成后重试；不要删除锁文件来强行并发运行。
+- 正常关闭服务或脚本后，锁会自动释放。若进程被强杀，下一次申请会核对 owner PID、进程启动时间及 active child PID，并回收确认失效的租约。
+- 若报 `workflow_lock_invalid`，不要立即删锁。先查看租约内容并确认 owner/child 进程都不存在：
+
+```powershell
+Get-Content .\data\locks\workflow.lock.json -Raw
+```
+
+只有确认服务与所有 GithubJoy PowerShell 脚本都已停止后，才可人工删除损坏的 `data\locks\workflow.lock.json`；随后重试。锁文件不应提交，`data/` 已整体忽略。
+
 ---
 
 ## 7. 数据维护与修复
@@ -619,6 +636,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migrate.ps1 -Rollb
 - 只回滚该快照涉及的、且当前仍在 `read` List 的条目（按 `data\state\lists-<runId>.json`）；
 - `published` 保持 true，不会把已发布的页面撤回；
 - 回滚后条目回到 unread，可重新阅读或重新迁移。
+- 回滚目标为 `[unread]`，依赖同一成员关系约束：unread 条目不应额外属于其它 List。
 
 ### 7.5 queue.json 看起来坏了
 
@@ -849,7 +867,7 @@ git pull --ff-only
 | `config.json` | 业务参数 | 是（不含密钥） |
 | `gh.json` / `llm.json` | 凭据 | **否** |
 | `service/` / `scripts/` / `templates/` | 代码 | 是 |
-| `data/` | 运行期数据（queue/state/summaries/jobs；queue 为临时工作集） | 否 |
+| `data/` | 运行期数据（queue/state/summaries/jobs；queue 为临时工作集；`locks/workflow.lock.json` 为运行期租约） | 否 |
 | `reports/` | 渲染产物：`<时间戳>.html` + index.html（无 latest.html 别名） | **是**（发布即提交） |
 | 根 `index.html` | 站点首页：render 自动生成（同 reports/index.html 数据源，链接带 `reports/` 前缀） | 是 |
 | `docs/*.md` | 文档三件套 | 是 |
@@ -865,6 +883,7 @@ git pull --ff-only
 | 3 | 发布失败 | 分叉、无权限、分支保护 |
 | 4 | 服务启动失败 | 端口全占、Node 版本低 |
 | 5 | 部分成功 | n 条里有失败（不含 404 消失）；read 有产出时任务显示 `partial` 并继续发布，退出码仍为 5 |
+| 6 | 工作流繁忙 | 全局工作流锁被另一进程持有；确认其结束后重试 |
 
 ### 12.4 实现后需要回填本节的地方
 
@@ -899,3 +918,6 @@ git pull --ff-only
 | 材料缓存（2026-11-20） | ✅ 已回填（2026-11-20，见 MEMORY「材料缓存」）：we-promise/sure 首抓 9~16 秒、缓存命中 <1 秒（数字一致）；`-Refresh` 绕过缓存；lite 缓存下 deep 正确重抓；cleanup.ps1 干跑验证 materials 删除路径 |
 | star 修复三连（2026-11-20）：304 不计配额、star filter 失败重试 | ✅ 已回填（2026-11-20）：`scan.ps1 -DryRun` exit 0，star filter 命中 1 条已 star 过滤；304 分支与重试路径经 Parser+DryRun 验证 |
 | read 部分成功语义（2026-11-20）：`gone` 独立计数 + 自动 unstar 清理、任务状态 `partial` | ✅ 已回填（2026-11-20，见 MEMORY 同名条目）：`read.ps1` 404 不再计入 failed；真实运行时对 gone 条目执行 unstar（失败仅告警）；server 对「read 退出码 5 但 succeeded>0」显示 `partial`（琥珀色标签），页面进度文案含「消失 n」与部分成功提示；流水线行为不变（≥1 条 done 即继续） |
+| Lists 成员查询优化（2026-11-21，v1.4） | ✅ 已回填：PowerShell Parser 通过；scan DryRun 只读取 unread/read（74 / 12 项）、star 查询无 unknown fallback，计划 25 条且无远端写入；migrate DryRun 正常（当前无待迁移项）；unknown-star、目录分页与分页上限通过模拟测试；无真实 List mutation |
+| star/List 双写补偿（2026-11-21） | ✅ 已回填：新 star 后 node ID 缺失时补偿 unstar；List mutation 报错先核实 unread，已加入则按成功、确认未加入才 unstar；304 不撤销；状态未知/补偿失败分别进入 `listStateUnknown` / `starRollbackFailed`；Parser + scan DryRun 通过，未触发真实补偿 |
+| 跨进程工作流锁（2026-11-21，v1.5） | ✅ PowerShell Parser、token join、独立竞争、stale owner 回收模拟通过；scan/read/publish/migrate DryRun 均正常且锁释放；Node↔PowerShell 并发联调未做（现有服务 PID 28404 未重启，避免中断用户进程） |

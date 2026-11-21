@@ -4,7 +4,7 @@
 
 ## 状态
 
-**M1–M4c 完成并已上线：<https://gingkorich.github.io/GithubJoy/>**（报告在 `/reports/`，根路径为归档入口）。文档：[`REQUIREMENTS.md`](docs/REQUIREMENTS.md)、[`DESIGN.md`](docs/DESIGN.md)、[`RUNBOOK.md`](docs/RUNBOOK.md)。点一次「阅读」自动完成 阅读→渲染→发布→迁移；架构口径（2026-11-20）：**GitHub Star Lists 是唯一状态源**，`data/queue.json` 只是 read 运行期的临时工作集。
+**M1–M4c 完成并已上线：<https://gingkorich.github.io/GithubJoy/>**（报告在 `/reports/`，根路径为归档入口）。文档：[`REQUIREMENTS.md`](docs/REQUIREMENTS.md)、[`DESIGN.md`](docs/DESIGN.md)、[`RUNBOOK.md`](docs/RUNBOOK.md)。点一次「阅读」自动完成 阅读→渲染→发布→迁移；架构口径（2026-11-20）：**GitHub Star Lists 是唯一状态源**，`data/queue.json` 只是 read 运行期的临时工作集。Star List 约束与跨进程工作流锁见 v1.5 文档。
 
 ## 讨论结论速览
 
@@ -18,9 +18,9 @@
 
 | 文件 | 用途 |
 |---|---|
-| `docs/REQUIREMENTS.md` | **需求规格说明（v1.3）**：目标、范围、FR-1～FR-14、验收标准、决策记录、账号风险与合规评估 |
-| `docs/DESIGN.md` | **实现设计（v1.3）**：架构、目录、数据模型、API 契约、扫描/阅读/发布/迁移算法、崩溃恢复、偏差登记 |
-| `docs/RUNBOOK.md` | **操作手册（v1.3）**：首次部署、日常操作、凭据管理、故障排查（含代理）、备份恢复、回滚与升级 |
+| `docs/REQUIREMENTS.md` | **需求规格说明（v1.5）**：目标、范围、FR-1～FR-14、验收标准、决策记录、账号风险与合规评估 |
+| `docs/DESIGN.md` | **实现设计（v1.5）**：架构、目录、数据模型、API 契约、扫描/阅读/发布/迁移算法、崩溃恢复、偏差登记 |
+| `docs/RUNBOOK.md` | **操作手册（v1.5）**：首次部署、日常操作、凭据管理、故障排查（含代理）、备份恢复、回滚与升级 |
 | `joy.bat` / `service/` | 本地控制台：127.0.0.1 监听、`X-Joy-Token` + Host 校验、gh 登录/退出、扫描/阅读/发布/迁移编排、模型配置 |
 | `scan.bat` / `run-joy.bat` | 无界面入口：分别透传 `scan.ps1` / `read.ps1` |
 | `scripts/{scan,read,render,publish,migrate,status,probe-lists}.ps1` | 流水线脚本（均可单独干跑） |

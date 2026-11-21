@@ -20,6 +20,7 @@ try {
 
 . (Join-Path $PSScriptRoot 'lib\config.ps1')
 . (Join-Path $PSScriptRoot 'lib\log.ps1')
+. (Join-Path $PSScriptRoot 'lib\lock.ps1')
 
 $root = Get-JoyRoot
 $dataDir = Join-Path $root 'data'
@@ -53,6 +54,15 @@ $script:Result = [ordered]@{
   ok = $true; dryRun = [bool]$DryRun
   deleted = [ordered]@{ jobs = 0; ids = 0; logs = 0; trending = 0; work = 0; debug = 0; materials = 0 }
   bytes = 0; error = $null
+}
+
+$lock = Enter-JoyWorkflowLock -Kind 'cleanup'
+if (-not $lock.ok) {
+  $script:Result.ok = $false
+  $script:Result.error = [string]$lock.error
+  Write-JoyLog ("cleanup skipped: {0}" -f $lock.error) 'WARN'
+  if ($JsonOut) { $script:Result | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $JsonOut -Encoding UTF8 }
+  exit 6
 }
 
 function Remove-JoyFile([string]$Path) {
@@ -139,4 +149,5 @@ Write-JoyLog ("summary: removed {0} file(s), {1} bytes (jobs={2}, ids={3}, logs=
 if ($JsonOut) {
   $script:Result | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $JsonOut -Encoding UTF8
 }
+Exit-JoyWorkflowLock
 exit 0

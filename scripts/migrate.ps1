@@ -19,11 +19,11 @@ try {
 . (Join-Path $PSScriptRoot 'lib\log.ps1')
 . (Join-Path $PSScriptRoot 'lib\http.ps1')
 . (Join-Path $PSScriptRoot 'lib\github.ps1')
+. (Join-Path $PSScriptRoot 'lib\lock.ps1')
 
 $root = Get-JoyRoot
 $dataDir = Join-Path $root 'data'
 $stateDir = Join-Path $dataDir 'state'
-$queuePath = Join-Path $dataDir 'queue.json'
 $runTag = 'migrate-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
 $started = Get-Date
 if (-not (Test-Path -LiteralPath $stateDir)) { New-Item -ItemType Directory -Force -Path $stateDir | Out-Null }
@@ -48,6 +48,7 @@ function Save-ResultAndExit([int]$Code) {
   if ($JsonOut) { Write-JoyJsonFile $JsonOut $script:Result }
   Write-JoyEvent @{ evt = 'result'; code = $Code; result = $script:Result }
   Write-JoyLog ("migrate finished code={0} moved={1} failed={2} rolledBack={3}" -f $Code, $script:Result.moved, $script:Result.failed, $script:Result.rolledBack)
+  Exit-JoyWorkflowLock
   exit $Code
 }
 
@@ -57,6 +58,9 @@ function Fail-JoyMigrate([int]$Code, [string]$Message, [string]$Hint = '') {
   Write-JoyLog ("FAIL: {0}" -f $Message) 'ERROR'
   Save-ResultAndExit $Code
 }
+
+$lock = Enter-JoyWorkflowLock -Kind 'migrate'
+if (-not $lock.ok) { Fail-JoyMigrate 6 ([string]$lock.error) }
 
 # ---------------------------------------------------------------- auth + lists
 $cfg = Get-JoyConfig
@@ -130,27 +134,10 @@ if (-not $detail.ok) { Fail-JoyMigrate 2 ('cannot read unread items: ' + [string
 $unreadMap = @{}
 foreach ($li in @($detail.items)) { $unreadMap[([string]$li.fullName).ToLowerInvariant()] = $li }
 
-$membership = @{}
-foreach ($l in @($listsRes.lists)) {
-  $items = Get-JoyListItems -Token $token -ListId ([string]$l.id) -Proxy $proxy
-  if (-not $items.ok) { continue }
-  foreach ($nm in @($items.names)) {
-    $k = ([string]$nm).ToLowerInvariant()
-    if (-not $membership.ContainsKey($k)) { $membership[$k] = New-Object System.Collections.Generic.List[string] }
-    if (-not $membership[$k].Contains([string]$l.id)) { $membership[$k].Add([string]$l.id) }
-  }
-}
-
 $todo = @()
 foreach ($k in @($publishedIds.Keys)) {
   if (-not $unreadMap.ContainsKey($k)) { continue }
   $li = $unreadMap[$k]
-  $other = @()
-  if ($membership.ContainsKey($k)) {
-    foreach ($id in $membership[$k]) {
-      if ($id -ne $unreadId -and $id -ne $readId) { $other += [string]$id }
-    }
-  }
   $todo += [pscustomobject]@{
     id = $k
     fullName = [string]$li.fullName
@@ -159,7 +146,7 @@ foreach ($k in @($publishedIds.Keys)) {
     movedAt = $null
     lastError = $null
     repo = [pscustomobject]@{ nodeId = [string]$li.id }
-    list = [pscustomobject]@{ inUnread = $true; inRead = $false; otherListIds = $other }
+    list = [pscustomobject]@{ inUnread = $true; inRead = $false; otherListIds = @() }
   }
 }
 if ($OnlyId) {
@@ -211,13 +198,9 @@ foreach ($it in $todo) {
   $idx++
   $entry = [ordered]@{ id = $it.id; fullName = $it.fullName; status = ''; error = $null }
   try {
-    $target = @()
-    if ($it.list -and ($it.list.PSObject.Properties.Name -contains 'otherListIds')) {
-      foreach ($id in @($it.list.otherListIds)) {
-        if ($id -and $id -ne $readId -and $id -ne $unreadId) { $target += [string]$id }
-      }
-    }
-    $target += $readId
+    # Project invariant: unread items are not assigned to any other List.
+    # updateUserListsForItem replaces the complete membership set.
+    $target = @($readId)
 
     if ($DryRun) {
       Write-JoyLog ("dryRun: would set Lists for {0} -> [{1}]" -f $it.fullName, ($target -join ', '))

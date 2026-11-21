@@ -28,6 +28,7 @@ GitHub Trending 每日简报：扫描 today / week / month 榜单 → 未收藏�
 
 - Windows 11 + PowerShell 5.1：`.ps1` **保持纯 ASCII**；中文放 `.md`/`.json`，以 UTF-8 读取。
 - 本地控制台：Node ≥18 **仅标准库**（不 `npm install`），只绑 `127.0.0.1`；写操作校验 `X-Joy-Token` 与 `Host`；页面不用 CDN/前端框架。
+- 写工作流共用 `data/locks/workflow.lock.json`；Node 的 read→render→publish→migrate 全程持有租约，独立 PowerShell 入口必须申请或验证同一 token，不能绕过互斥。
 - GitHub 登录优先 `gh`，PAT 兜底；`gh auth token` 只在内存使用，不写盘、不入日志。
 - 数据文件 UTF-8 无 BOM；读取时容忍 BOM。
 - HTTP：超时、重试、错误详情（状态 + 响应体）；速率限制退避。
@@ -45,7 +46,7 @@ GitHub Trending 每日简报：扫描 today / week / month 榜单 → 未收藏�
 
 ## 下一步（M1–M4c 已上线）
 
-1. 需求变更先回写 `REQUIREMENTS.md` 并升版本，再动代码（当前 v1.3）；
+1. 需求变更先回写 `REQUIREMENTS.md` 并升版本，再动代码（当前 v1.5）；
 2. 每步先干跑（scan `-DryRun` / read `-DryRun` / `-NoWrite` / publish `-DryRun` / migrate `-DryRun`）再真实写入；
 3. 实现中发现的偏差登记到 `DESIGN.md` 第 15 节；
 4. 每次改动回填 `RUNBOOK.md` 第 12.4 节的实测项；

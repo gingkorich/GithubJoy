@@ -15,6 +15,8 @@ const { spawn, execFile, spawnSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const DATA = path.join(ROOT, 'data');
 const JOBS = path.join(DATA, 'jobs');
+const LOCKS = path.join(DATA, 'locks');
+const WORKFLOW_LOCK_FILE = path.join(LOCKS, 'workflow.lock.json');
 const PUB = path.join(__dirname, 'public');
 const TOKEN_FILE = path.join(DATA, 'service-token');
 const SERVICE_FILE = path.join(DATA, 'service.json');
@@ -29,7 +31,124 @@ const opt = (name) => {
 const flag = (name) => args.includes(name);
 
 function ensureDirs() {
-  for (const d of [DATA, JOBS]) fs.mkdirSync(d, { recursive: true });
+  for (const d of [DATA, JOBS, LOCKS]) fs.mkdirSync(d, { recursive: true });
+}
+
+function readWorkflowLock() {
+  try { return JSON.parse(fs.readFileSync(WORKFLOW_LOCK_FILE, 'utf8')); }
+  catch (_) { return null; }
+}
+
+function processRecordAlive(pidValue, startedValue) {
+  if (pidValue === null || pidValue === undefined || pidValue === '') return false;
+  if (!Number.isInteger(Number(pidValue))) return false;
+  const pid = Number(pidValue);
+  const command = '$ErrorActionPreference="Stop"; (Get-Process -Id ' + pid + ').StartTime.ToUniversalTime().ToString("o")';
+  const check = spawnSync('powershell.exe', ['-NoProfile', '-Command', command], {
+    encoding: 'utf8', windowsHide: true, timeout: 5000,
+  });
+  if (check.status === 0 && check.stdout.trim()) {
+    const actual = Date.parse(check.stdout.trim());
+    const expected = Date.parse(String(startedValue || ''));
+    if (Number.isFinite(actual) && Number.isFinite(expected)) {
+      return Math.abs(actual - expected) <= 15000;
+    }
+    return true;
+  }
+  // If process inspection failed, prefer blocking over stealing a live lock.
+  try { process.kill(pid, 0); return true; } catch (e) {
+    return !!(e && e.code !== 'ESRCH');
+  }
+}
+
+function lockOwnerAlive(record) {
+  if (!record) return false;
+  return processRecordAlive(record.ownerPid, record.ownerStartedAt) ||
+    processRecordAlive(record.activeChildPid, record.activeChildStartedAt);
+}
+
+function reclaimStaleWorkflowLock() {
+  let record = null;
+  try { record = readWorkflowLock(); } catch (_) {}
+  // A malformed lease cannot be proven stale safely; require manual inspection.
+  if (!record) return false;
+  if (record && lockOwnerAlive(record)) return false;
+  const stale = WORKFLOW_LOCK_FILE + '.stale-' + crypto.randomBytes(6).toString('hex');
+  try {
+    fs.renameSync(WORKFLOW_LOCK_FILE, stale);
+    try { fs.unlinkSync(stale); } catch (_) {}
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function acquireWorkflowLock(kind, inheritedToken) {
+  ensureDirs();
+  if (inheritedToken) {
+    const current = readWorkflowLock();
+    if (current && current.token === inheritedToken) {
+      return { ok: true, token: inheritedToken, owned: false };
+    }
+    return { ok: false, error: 'workflow_lock_token_invalid' };
+  }
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const token = crypto.randomBytes(24).toString('hex');
+    const record = {
+      version: 1, token, ownerPid: process.pid,
+      ownerStartedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+      kind: String(kind || 'workflow'), acquiredAt: new Date().toISOString(),
+    };
+    let fd = null;
+    let created = false;
+    try {
+      fd = fs.openSync(WORKFLOW_LOCK_FILE, 'wx', 0o600);
+      created = true;
+      fs.writeSync(fd, Buffer.from(JSON.stringify(record), 'utf8'));
+      fs.closeSync(fd);
+      return { ok: true, token, owned: true };
+    } catch (e) {
+      if (fd !== null) { try { fs.closeSync(fd); } catch (_) {} }
+      if (created) { try { fs.unlinkSync(WORKFLOW_LOCK_FILE); } catch (_) {} }
+      if (!e || e.code !== 'EEXIST') return { ok: false, error: 'workflow_lock_create_failed: ' + String((e && e.message) || e) };
+      if (!reclaimStaleWorkflowLock()) {
+        const current = readWorkflowLock();
+        return { ok: false, error: current
+          ? ('workflow_busy: ' + String(current.kind || 'workflow') + ' pid=' + String(current.ownerPid || '?'))
+          : 'workflow_lock_invalid: inspect processes before removing the lock file' };
+      }
+    }
+  }
+  return { ok: false, error: 'workflow_busy' };
+}
+
+function releaseWorkflowLock(token) {
+  if (!token) return false;
+  const current = readWorkflowLock();
+  if (!current || current.token !== token) return false;
+  try { fs.unlinkSync(WORKFLOW_LOCK_FILE); return true; } catch (_) { return false; }
+}
+
+function updateWorkflowLockChild(token, childPid) {
+  const current = readWorkflowLock();
+  if (!current || current.token !== token) return false;
+  if (childPid) {
+    current.activeChildPid = Number(childPid);
+    current.activeChildStartedAt = new Date().toISOString();
+  } else {
+    delete current.activeChildPid;
+    delete current.activeChildStartedAt;
+  }
+  const tmp = WORKFLOW_LOCK_FILE + '.tmp-' + crypto.randomBytes(6).toString('hex');
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(current), 'utf8');
+    fs.renameSync(tmp, WORKFLOW_LOCK_FILE);
+    return true;
+  } catch (_) {
+    try { fs.unlinkSync(tmp); } catch (_) {}
+    return false;
+  }
 }
 
 function readOrCreateToken() {
@@ -501,6 +620,9 @@ function detectProxy() {
 
 function childEnv(extra) {
   const env = Object.assign({}, process.env, extra || {});
+  if (!extra || !Object.prototype.hasOwnProperty.call(extra, 'JOY_WORKFLOW_LOCK_TOKEN')) {
+    delete env.JOY_WORKFLOW_LOCK_TOKEN;
+  }
   const p = detectProxy().proxy;
   if (p) {
     env.HTTPS_PROXY = p;
@@ -635,6 +757,14 @@ function pipelineView() {
   return { active: !!pipeline.active, stage: pipeline.stage, jobId: pipeline.jobId };
 }
 
+function finishPipeline() {
+  if (!pipeline) return;
+  const token = pipeline.lockToken;
+  pipeline.active = false;
+  pipeline = null;
+  releaseWorkflowLock(token);
+}
+
 function runCleanup() {
   // fire-and-forget artifact pruning; never blocks the job slot
   try {
@@ -653,43 +783,43 @@ async function advancePipeline(finished, res) {
       .filter((x) => x && x.status === 'done' && x.id)
       .map((x) => String(x.id));
     if (!ids.length) {
-      pipeline.active = false;
+      finishPipeline();
       console.log('[joy] pipeline: read produced no summaries, stop');
       return;
     }
     const idsFile = path.join(JOBS, 'ids-' + stamp(new Date()) + '.txt');
     fs.writeFileSync(idsFile, ids.join('\n'), 'utf8');
-    const r = await startScriptJob('render', 'render.ps1', ['-IdsFile', idsFile], 10 * 60 * 1000, { pipeline: true });
-    if (r.busy) { pipeline.active = false; return; }
+    const r = await startScriptJob('render', 'render.ps1', ['-IdsFile', idsFile], 10 * 60 * 1000, {}, pipeline.lockToken);
+    if (r.busy || r.locked) { finishPipeline(); return; }
     pipeline.stage = 'render';
     pipeline.jobId = r.jobId;
     return;
   }
 
   if (finished.state !== 'succeeded') {
-    pipeline.active = false;
+    finishPipeline();
     console.log('[joy] pipeline: ' + finished.kind + ' failed, stop');
     return;
   }
 
   if (finished.kind === 'render') {
-    const r = await startScriptJob('publish', 'publish.ps1', [], 10 * 60 * 1000, { pipeline: true });
-    if (r.busy) { pipeline.active = false; return; }
+    const r = await startScriptJob('publish', 'publish.ps1', [], 10 * 60 * 1000, {}, pipeline.lockToken);
+    if (r.busy || r.locked) { finishPipeline(); return; }
     pipeline.stage = 'publish';
     pipeline.jobId = r.jobId;
     return;
   }
 
   if (finished.kind === 'publish') {
-    const r = await startScriptJob('migrate', 'migrate.ps1', [], 10 * 60 * 1000, { pipeline: true });
-    if (r.busy) { pipeline.active = false; return; }
+    const r = await startScriptJob('migrate', 'migrate.ps1', [], 10 * 60 * 1000, {}, pipeline.lockToken);
+    if (r.busy || r.locked) { finishPipeline(); return; }
     pipeline.stage = 'migrate';
     pipeline.jobId = r.jobId;
     return;
   }
 
   if (finished.kind === 'migrate') {
-    pipeline.active = false;
+    finishPipeline();
     console.log('[joy] pipeline: complete');
     runCleanup();
   }
@@ -818,6 +948,8 @@ function dateOnly(d) {
 
 async function startScan(dryRun) {
   if (job && job.state === 'running') return { busy: true, jobId: job.id };
+  const lock = acquireWorkflowLock('scan');
+  if (!lock.ok) return { locked: true, error: lock.error };
 
   const now = new Date();
   const id = 'scan-' + stamp(now);
@@ -827,7 +959,7 @@ async function startScan(dryRun) {
     exitCode: null, error: null, progress: { phase: 'start', done: 0, total: 5 },
     result: null, lines: [], dryRun: !!dryRun,
   };
-  persistJob();
+  try { persistJob(); } catch (e) { releaseWorkflowLock(lock.token); throw e; }
 
   const resultFile = path.join(JOBS, id + '.result.json');
   const argv = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(ROOT, 'scripts', 'scan.ps1'),
@@ -835,22 +967,37 @@ async function startScan(dryRun) {
   if (dryRun) argv.push('-DryRun');
 
   const child = spawn('powershell.exe', argv, {
-    stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: childEnv(),
+    stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+    env: childEnv({ JOY_WORKFLOW_LOCK_TOKEN: lock.token }),
   });
   job.pid = child.pid;
+  updateWorkflowLockChild(lock.token, child.pid);
   child.stdout.on('data', pushLine);
   child.stderr.on('data', pushLine);
 
-  const timer = setTimeout(() => {
-    if (job && job.state === 'running') {
+  let timer = null;
+  child.on('error', (e) => {
+    if (!job || job.id !== id || job.state !== 'running') return;
+    if (timer) clearTimeout(timer);
+    job.endedAt = new Date().toISOString();
+    job.error = 'spawn_failed: ' + String((e && e.message) || e);
+    job.state = 'failed';
+    job.exitCode = 1;
+    releaseWorkflowLock(lock.token);
+    persistJob();
+  });
+
+  timer = setTimeout(() => {
+    if (job && job.id === id && job.state === 'running') {
       job.error = 'timeout_1800s';
       try { execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], () => {}); } catch (_) {}
     }
   }, 30 * 60 * 1000);
 
   child.on('close', (code) => {
-    clearTimeout(timer);
-    if (!job || job.state !== 'running') return;
+    if (timer) clearTimeout(timer);
+    if (!job || job.id !== id) { releaseWorkflowLock(lock.token); return; }
+    if (job.state !== 'running') { releaseWorkflowLock(lock.token); return; }
     job.endedAt = new Date().toISOString();
     job.exitCode = code;
     const res = readJsonFile(resultFile, null);
@@ -861,9 +1008,10 @@ async function startScan(dryRun) {
     }
     if (code !== 0 && !job.error) job.error = 'exit_' + code;
     job.state = (code === 0 && !(res && res.ok === false)) ? 'succeeded' : 'failed';
-    if (job.state === 'succeeded' && !dryRun) runCleanup();
     invalidateGh(); invalidateLists();
     persistJob();
+    releaseWorkflowLock(lock.token);
+    if (job.state === 'succeeded' && !dryRun) runCleanup();
   });
 
   return { jobId: id };
@@ -874,6 +1022,8 @@ async function startRead(opts) {
   const n = Number(rawN);
   if (!Number.isInteger(n) || n < 1 || n > 20) return { error: 'bad_n' };
   if (job && job.state === 'running') return { busy: true, jobId: job.id };
+  const lock = acquireWorkflowLock('read-pipeline');
+  if (!lock.ok) return { locked: true, error: lock.error };
 
   const now = new Date();
   const id = 'read-' + stamp(now);
@@ -884,7 +1034,8 @@ async function startRead(opts) {
     result: null, lines: [],
     options: { n, lite: !!opts.lite, noWrite: !!opts.noWrite, dryRun: !!opts.dryRun },
   };
-  persistJob();
+  pipeline = { active: true, stage: 'read', jobId: id, lockToken: lock.token };
+  try { persistJob(); } catch (e) { finishPipeline(); throw e; }
 
   const resultFile = path.join(JOBS, id + '.result.json');
   const argv = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(ROOT, 'scripts', 'read.ps1'),
@@ -895,22 +1046,43 @@ async function startRead(opts) {
   if (opts.lite) argv.push('-Lite');
 
   const child = spawn('powershell.exe', argv, {
-    stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: childEnv(),
+    stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+    env: childEnv({ JOY_WORKFLOW_LOCK_TOKEN: lock.token }),
   });
   job.pid = child.pid;
+  updateWorkflowLockChild(lock.token, child.pid);
   child.stdout.on('data', pushLine);
   child.stderr.on('data', pushLine);
 
-  const timer = setTimeout(() => {
-    if (job && job.state === 'running') {
+  let timer = null;
+  child.on('error', (e) => {
+    if (!job || job.id !== id || job.state !== 'running') return;
+    if (timer) clearTimeout(timer);
+    job.endedAt = new Date().toISOString();
+    job.error = 'spawn_failed: ' + String((e && e.message) || e);
+    job.state = 'failed';
+    job.exitCode = 1;
+    invalidateGh(); invalidateLists();
+    persistJob();
+    if (pipeline && pipeline.lockToken === lock.token) finishPipeline();
+    else releaseWorkflowLock(lock.token);
+  });
+
+  timer = setTimeout(() => {
+    if (job && job.id === id && job.state === 'running') {
       job.error = 'timeout_3600s';
       try { execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], () => {}); } catch (_) {}
     }
   }, 60 * 60 * 1000);
 
   child.on('close', (code) => {
-    clearTimeout(timer);
-    if (!job || job.state !== 'running') return;
+    if (timer) clearTimeout(timer);
+    if (!job || job.id !== id) { releaseWorkflowLock(lock.token); return; }
+    if (job.state !== 'running') {
+      if (pipeline && pipeline.lockToken === lock.token) finishPipeline();
+      else releaseWorkflowLock(lock.token);
+      return;
+    }
     job.endedAt = new Date().toISOString();
     job.exitCode = code;
     const res = readJsonFile(resultFile, null);
@@ -923,17 +1095,23 @@ async function startRead(opts) {
     job.state = (code === 0 && !(res && res.ok === false)) ? 'succeeded' : 'failed';
     invalidateGh(); invalidateLists();
     persistJob();
-    advancePipeline(job, res).catch((e) => {
+    updateWorkflowLockChild(lock.token, null);
+    advancePipeline(job, res).then(() => {
+      if (!pipeline || pipeline.lockToken !== lock.token) releaseWorkflowLock(lock.token);
+    }).catch((e) => {
       console.log('[joy] pipeline error: ' + (e && e.message ? e.message : e));
-      if (pipeline) pipeline.active = false;
+      if (pipeline && pipeline.lockToken === lock.token) finishPipeline();
+      else releaseWorkflowLock(lock.token);
     });
   });
 
   return { jobId: id };
 }
 
-async function startScriptJob(kind, scriptName, scriptArgs, timeoutMs, options) {
+async function startScriptJob(kind, scriptName, scriptArgs, timeoutMs, options, inheritedLockToken) {
   if (job && job.state === 'running') return { busy: true, jobId: job.id };
+  const lock = acquireWorkflowLock(kind, inheritedLockToken);
+  if (!lock.ok) return { locked: true, error: lock.error };
 
   const now = new Date();
   const id = kind + '-' + stamp(now);
@@ -943,7 +1121,11 @@ async function startScriptJob(kind, scriptName, scriptArgs, timeoutMs, options) 
     exitCode: null, error: null, progress: { phase: 'start', done: 0, total: 0 },
     result: null, lines: [], options: options || {},
   };
-  persistJob();
+  try { persistJob(); } catch (e) {
+    if (pipeline && pipeline.lockToken === lock.token) finishPipeline();
+    else releaseWorkflowLock(lock.token);
+    throw e;
+  }
 
   const resultFile = path.join(JOBS, id + '.result.json');
   const argv = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(ROOT, 'scripts', scriptName),
@@ -951,22 +1133,46 @@ async function startScriptJob(kind, scriptName, scriptArgs, timeoutMs, options) 
     .concat(scriptArgs || []);
 
   const child = spawn('powershell.exe', argv, {
-    stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: childEnv(),
+    stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+    env: childEnv({ JOY_WORKFLOW_LOCK_TOKEN: lock.token }),
   });
   job.pid = child.pid;
+  updateWorkflowLockChild(lock.token, child.pid);
   child.stdout.on('data', pushLine);
   child.stderr.on('data', pushLine);
 
-  const timer = setTimeout(() => {
-    if (job && job.state === 'running') {
+  let timer = null;
+  child.on('error', (e) => {
+    if (!job || job.id !== id || job.state !== 'running') return;
+    if (timer) clearTimeout(timer);
+    job.endedAt = new Date().toISOString();
+    job.error = 'spawn_failed: ' + String((e && e.message) || e);
+    job.state = 'failed';
+    job.exitCode = 1;
+    persistJob();
+    if (pipeline && pipeline.lockToken === lock.token) finishPipeline();
+    else releaseWorkflowLock(lock.token);
+  });
+
+  timer = setTimeout(() => {
+    if (job && job.id === id && job.state === 'running') {
       job.error = 'timeout_' + Math.round(timeoutMs / 1000) + 's';
       try { execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], () => {}); } catch (_) {}
     }
   }, timeoutMs);
 
   child.on('close', (code) => {
-    clearTimeout(timer);
-    if (!job || job.state !== 'running') return;
+    if (timer) clearTimeout(timer);
+    if (!job || job.id !== id) {
+      if (pipeline && pipeline.lockToken === lock.token) finishPipeline();
+      else releaseWorkflowLock(lock.token);
+      return;
+    }
+    if (job.state !== 'running') {
+      if (pipeline && pipeline.lockToken === lock.token) finishPipeline();
+      else releaseWorkflowLock(lock.token);
+      return;
+    }
     job.endedAt = new Date().toISOString();
     job.exitCode = code;
     const res = readJsonFile(resultFile, null);
@@ -984,9 +1190,14 @@ async function startScriptJob(kind, scriptName, scriptArgs, timeoutMs, options) 
     }
     invalidateGh(); invalidateLists();
     persistJob();
-    advancePipeline(job, res).catch((e) => {
+    updateWorkflowLockChild(lock.token, null);
+    if (lock.owned) releaseWorkflowLock(lock.token);
+    advancePipeline(job, res).then(() => {
+      if (!pipeline || pipeline.lockToken !== lock.token) releaseWorkflowLock(lock.token);
+    }).catch((e) => {
       console.log('[joy] pipeline error: ' + (e && e.message ? e.message : e));
-      if (pipeline) pipeline.active = false;
+      if (pipeline && pipeline.lockToken === lock.token) finishPipeline();
+      else releaseWorkflowLock(lock.token);
     });
   });
 
@@ -1132,7 +1343,7 @@ const server = http.createServer(async (req, res) => {
       const r = await startRead(body);
       if (r.error === 'bad_n') return sendJson(res, 400, { error: 'n must be 1-20' });
       if (r.busy) return sendJson(res, 409, { error: 'busy', jobId: r.jobId });
-      pipeline = { active: true, stage: 'read', jobId: r.jobId };
+      if (r.locked) return sendJson(res, 409, { error: 'workflow_busy', detail: r.error });
       return sendJson(res, 202, { jobId: r.jobId, pipeline: pipelineView() });
     }
 
@@ -1172,6 +1383,7 @@ const server = http.createServer(async (req, res) => {
       if (body.onlyId) args.push('-OnlyId', String(body.onlyId));
       const r = await startScriptJob('render', 'render.ps1', args, 10 * 60 * 1000, body);
       if (r.busy) return sendJson(res, 409, { error: 'busy', jobId: r.jobId });
+      if (r.locked) return sendJson(res, 409, { error: 'workflow_busy', detail: r.error });
       return sendJson(res, 202, { jobId: r.jobId });
     }
 
@@ -1186,6 +1398,7 @@ const server = http.createServer(async (req, res) => {
       if (body.noPush) args.push('-NoPush');
       const r = await startScriptJob('publish', 'publish.ps1', args, 10 * 60 * 1000, body);
       if (r.busy) return sendJson(res, 409, { error: 'busy', jobId: r.jobId });
+      if (r.locked) return sendJson(res, 409, { error: 'workflow_busy', detail: r.error });
       return sendJson(res, 202, { jobId: r.jobId });
     }
 
@@ -1199,6 +1412,7 @@ const server = http.createServer(async (req, res) => {
       if (body.dryRun) args.push('-DryRun');
       const r = await startScriptJob('migrate', 'migrate.ps1', args, 10 * 60 * 1000, body);
       if (r.busy) return sendJson(res, 409, { error: 'busy', jobId: r.jobId });
+      if (r.locked) return sendJson(res, 409, { error: 'workflow_busy', detail: r.error });
       return sendJson(res, 202, { jobId: r.jobId });
     }
 
@@ -1210,7 +1424,7 @@ const server = http.createServer(async (req, res) => {
       } catch (_) { /* empty body is fine */ }
       const r = await startScan(!!body.dryRun);
       if (r.busy) return sendJson(res, 409, { error: 'busy', jobId: r.jobId });
-      pipeline = null;
+      if (r.locked) return sendJson(res, 409, { error: 'workflow_busy', detail: r.error });
       return sendJson(res, 202, { jobId: r.jobId });
     }
 
@@ -1261,7 +1475,11 @@ setInterval(() => {
 
 process.on('SIGINT', () => {
   if (job && job.state === 'running' && job.pid) {
-    try { execFile('taskkill', ['/PID', String(job.pid), '/T', '/F'], () => {}); } catch (_) {}
+    try {
+      spawnSync('taskkill', ['/PID', String(job.pid), '/T', '/F'], {
+        encoding: 'utf8', windowsHide: true, timeout: 10000,
+      });
+    } catch (_) {}
   }
   try { fs.unlinkSync(SERVICE_FILE); } catch (_) {}
   process.exit(0);

@@ -17,6 +17,7 @@ try {
 . (Join-Path $PSScriptRoot 'lib\log.ps1')
 . (Join-Path $PSScriptRoot 'lib\http.ps1')
 . (Join-Path $PSScriptRoot 'lib\github.ps1')
+. (Join-Path $PSScriptRoot 'lib\lock.ps1')
 
 $root = Get-JoyRoot
 $dataDir = Join-Path $root 'data'
@@ -43,6 +44,8 @@ $script:Result = [ordered]@{
   starred        = 0
   starSkipped    = 0
   starFailed     = 0
+  starRollbackFailed = 0
+  listStateUnknown = 0
   selectionUsed  = [ordered]@{}
   selectionFilled = 0
   listsCreated   = @()
@@ -64,6 +67,7 @@ function Save-ResultAndExit([int]$Code) {
   $summary = $script:Result | ConvertTo-Json -Compress -Depth 8
   Write-JoyEvent @{ evt = 'result'; code = $Code; result = $script:Result }
   Write-JoyLog ("scan finished code={0} added={1} starred={2} error={3}" -f $Code, $script:Result.added, $script:Result.starred, $script:Result.error)
+  Exit-JoyWorkflowLock
   exit $Code
 }
 
@@ -74,6 +78,9 @@ function Fail-JoyScan([int]$Code, [string]$Message, [string]$Hint = '') {
   Write-JoyLog ("FAIL: {0}" -f $Message) 'ERROR'
   Save-ResultAndExit $Code
 }
+
+$lock = Enter-JoyWorkflowLock -Kind 'scan'
+if (-not $lock.ok) { Fail-JoyScan 6 ([string]$lock.error) 'Another GitHub Joy workflow is active; retry after it finishes' }
 
 function New-IsoNow { return (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }
 
@@ -350,10 +357,13 @@ if ($readIsNew -and $read) { $allLists[[string]$read.id] = $read }
 
 $member = @{}
 $unreadCount = 0
-foreach ($l in @($allLists.Values)) {
-  if (-not $l.id) { continue }
+$primaryListIds = @{}
+foreach ($l in @($unread, $read)) {
+  if (-not $l -or -not $l.id -or $primaryListIds.ContainsKey([string]$l.id)) { continue }
+  $primaryListIds[[string]$l.id] = $true
   if ($unread -and $unread.id -eq $l.id) { $unreadCount = [int]$l.itemCount }
-  if ($unreadIsNew -and $unread -and $unread.id -eq $l.id) { continue }
+  if (($unreadIsNew -and $unread -and $unread.id -eq $l.id) -or
+      ($readIsNew -and $read -and $read.id -eq $l.id)) { continue }
   $items = Get-JoyListItems -Token $token -ListId ([string]$l.id) -Proxy $proxy
   if (-not $items.ok) {
     Fail-JoyScan 2 ("cannot read items of List '{0}': {1}" -f $l.name, $items.error) 'Check GraphQL scope/limits'
@@ -363,10 +373,27 @@ foreach ($l in @($allLists.Values)) {
     if (-not $member.ContainsKey($k)) { $member[$k] = New-Object System.Collections.Generic.List[string] }
     if (-not $member[$k].Contains([string]$l.id)) { $member[$k].Add([string]$l.id) }
   }
-  Write-JoyLog ("list '{0}': {1} items (totalCount={2})" -f $l.name, @($items.names).Count, $l.itemCount)
+  Write-JoyLog ("primary List '{0}': {1} items (totalCount={2})" -f $l.name, @($items.names).Count, $l.itemCount)
+}
+
+function Undo-JoyStarForFailedList($Item, [string]$FullName, [bool]$StarredByRun, [string]$Token, [string]$Proxy) {
+  if (-not $StarredByRun) {
+    Write-JoyLog ("star rollback skipped for {0}: star pre-existed or was not created by this scan" -f $FullName) 'WARN'
+    return @{ ok = $true; error = $null }
+  }
+  $r = Remove-JoyStar -Token $Token -FullName $FullName -Proxy $Proxy
+  if ($r.ok) {
+    $Item.starred = $false
+    Write-JoyLog ("star rollback succeeded for {0} after unread List failure" -f $FullName) 'WARN'
+    return @{ ok = $true; error = $null }
+  }
+  $script:Result.starRollbackFailed++
+  $detail = Protect-JoySecret ([string]$r.error)
+  Write-JoyLog ("star rollback FAILED for {0}: {1}" -f $FullName, $detail) 'ERROR'
+  return @{ ok = $false; error = $detail }
 }
 $script:Result.unreadCount = $unreadCount
-Write-JoyLog "lists indexed: $($allLists.Count), unreadCount=$unreadCount"
+Write-JoyLog "target Lists indexed: $($primaryListIds.Count), unreadCount=$unreadCount"
 Write-JoyEvent @{ evt = 'progress'; phase = 'lists'; done = 1; total = 1 }
 
 # ---------------------------------------------------------------- filter
@@ -416,16 +443,75 @@ $dayCount = [int]$state.starCounters.count
 $starFilter = $true
 if ($searchCfg -and $searchCfg.PSObject.Properties.Name -contains 'starFilter') { $starFilter = [bool]$searchCfg.starFilter }
 
+$unknownStar = @{}
 if ($starFilter -and $toAdd.Count -gt 0) {
   $names = @()
   foreach ($e in $toAdd) { $names += [string]$e.cand.fullName }
   $sf = Get-JoyStarredMap -Token $token -FullNames $names -Proxy $proxy
+  $sfUnknownMap = @{}
+  foreach ($full in @($sf.unknown)) { $sfUnknownMap[([string]$full).ToLowerInvariant()] = $true }
   $keepAdd = @()
   foreach ($e in $toAdd) {
-    if ($sf.map.ContainsKey([string]$e.cand.fullName)) { $skipped.starred++ } else { $keepAdd += $e }
+    $key = ([string]$e.cand.fullName).ToLowerInvariant()
+    if ($sf.map.ContainsKey([string]$e.cand.fullName)) {
+      $skipped.starred++
+    } else {
+      $keepAdd += $e
+      if ($sfUnknownMap.ContainsKey($key)) { $unknownStar[$key] = $true }
+    }
   }
   $toAdd = $keepAdd
   Write-JoyLog ("star filter: alreadyStarred={0} batchErrors={1} remainAdd={2}" -f $sf.map.Count, $sf.errors, $toAdd.Count)
+} elseif (-not $starFilter) {
+  # Without a star lookup, all additions are unknown and need List membership
+  # verification before deciding whether they are already saved elsewhere.
+  foreach ($e in $toAdd) { $unknownStar[([string]$e.cand.fullName).ToLowerInvariant()] = $true }
+}
+
+if ($unknownStar.Count -gt 0) {
+  Write-JoyLog ("star status unknown for {0} candidate(s); checking all List memberships" -f $unknownStar.Count) 'WARN'
+  foreach ($l in @($allLists.Values)) {
+    if (-not $l.id -or $primaryListIds.ContainsKey([string]$l.id)) { continue }
+    $items = Get-JoyListItems -Token $token -ListId ([string]$l.id) -Proxy $proxy
+    if (-not $items.ok) {
+      Fail-JoyScan 2 ("cannot verify unknown-star candidates in List '{0}': {1}" -f $l.name, $items.error) `
+        'No List mutations were made; retry after the List query succeeds'
+    }
+    foreach ($nm in @($items.names)) {
+      $key = ([string]$nm).ToLowerInvariant()
+      if (-not $unknownStar.ContainsKey($key)) { continue }
+      if (-not $member.ContainsKey($key)) { $member[$key] = New-Object System.Collections.Generic.List[string] }
+      if (-not $member[$key].Contains([string]$l.id)) { $member[$key].Add([string]$l.id) }
+    }
+  }
+
+  $verifiedAdd = @()
+  foreach ($e in $toAdd) {
+    $key = ([string]$e.cand.fullName).ToLowerInvariant()
+    if (-not $unknownStar.ContainsKey($key)) { $verifiedAdd += $e; continue }
+    $ids = @()
+    if ($member.ContainsKey($key)) { $ids = @($member[$key].ToArray()) }
+    if ($unread -and $ids -contains [string]$unread.id) {
+      $skipped.already_unread++
+      continue
+    }
+    if ($read -and $ids -contains [string]$read.id) {
+      $skipped.already_read++
+      continue
+    }
+    $otherIds = @($ids | Where-Object {
+      $_ -ne [string]$unread.id -and $_ -ne [string]$read.id
+    })
+    if ($otherIds.Count -gt 0) {
+      # A repository already present in any other Star List is already saved;
+      # do not add it to unread when its star lookup was inconclusive.
+      $skipped.starred++
+      continue
+    }
+    $e.ids = @()
+    $verifiedAdd += $e
+  }
+  $toAdd = $verifiedAdd
 }
 
 # ---------------------------------------------------------------- quota selection
@@ -551,6 +637,7 @@ if (-not $starEnabled -and $mutations.Count -gt 0) {
 }
 
 foreach ($m in $mutations) {
+  $starredByRun = $false
   $target = @()
   foreach ($id in @($m.ids)) {
     if ($id -and $id -ne $unreadId) { $target += [string]$id }
@@ -597,6 +684,7 @@ foreach ($m in $mutations) {
       # 304 = already starred: idempotent no-op, does not consume scan/day quota
       Write-JoyLog ("star no-op (304 already starred): {0}" -f $m.qi.fullName) 'WARN'
     } else {
+      $starredByRun = $true
       $starCount++
       $dayCount++
       Start-Sleep -Milliseconds $starInterval
@@ -609,16 +697,43 @@ foreach ($m in $mutations) {
     if ($nodeId) { $m.qi.repo.nodeId = $nodeId }
   }
   if (-not $nodeId) {
-    $addFailed += [pscustomobject]@{ fullName = [string]$m.qi.fullName; error = 'missing_node_id' }
-    $m.qi.lastError = 'missing_node_id'
+    $failure = 'missing_node_id'
+    $rollback = Undo-JoyStarForFailedList -Item $m.qi -FullName ([string]$m.qi.fullName) `
+      -StarredByRun $starredByRun -Token $token -Proxy $proxy
+    if (-not $rollback.ok) { $failure += '; star_rollback_failed: ' + [string]$rollback.error }
+    $addFailed += [pscustomobject]@{ fullName = [string]$m.qi.fullName; error = $failure }
+    $m.qi.lastError = $failure
     continue
   }
 
   $res = Set-JoyItemLists -Token $token -NodeId $nodeId -ListIds $target -Proxy $proxy
   if (-not $res.ok) {
-    $addFailed += [pscustomobject]@{ fullName = [string]$m.qi.fullName; error = [string]$res.error }
+    # A transport error can happen after GitHub applied the mutation. Verify
+    # unread before compensating the star, so we do not undo a successful add.
+    $verify = Get-JoyListItems -Token $token -ListId $unreadId -Proxy $proxy
+    if (-not $verify.ok) {
+      $failure = 'list_add_failed_state_unknown: ' + [string]$res.error + '; verify_failed: ' + [string]$verify.error
+      $script:Result.listStateUnknown++
+      $addFailed += [pscustomobject]@{ fullName = [string]$m.qi.fullName; error = $failure }
+      $m.qi.lastError = $failure
+      Write-JoyLog ("cannot verify unread membership after List mutation failure for {0}; keeping star to avoid destructive rollback: {1}" -f $m.qi.fullName, $failure) 'ERROR'
+      continue
+    }
+    $present = @($verify.names | Where-Object { ([string]$_).ToLowerInvariant() -eq ([string]$m.qi.fullName).ToLowerInvariant() }).Count -gt 0
+    if ($present) {
+      $m.qi.list.inUnread = $true
+      $addedOk++
+      Write-JoyLog ("List mutation reported failure but unread membership is present; treating as success: {0}" -f $m.qi.fullName) 'WARN'
+      continue
+    }
+
+    $failure = 'list_add_failed: ' + [string]$res.error
+    $rollback = Undo-JoyStarForFailedList -Item $m.qi -FullName ([string]$m.qi.fullName) `
+      -StarredByRun $starredByRun -Token $token -Proxy $proxy
+    if (-not $rollback.ok) { $failure += '; star_rollback_failed: ' + [string]$rollback.error }
+    $addFailed += [pscustomobject]@{ fullName = [string]$m.qi.fullName; error = $failure }
     $m.qi.list.inUnread = $false
-    $m.qi.lastError = ('list_add_failed: ' + [string]$res.error)
+    $m.qi.lastError = $failure
     continue
   }
   $m.qi.list.inUnread = $true
@@ -668,8 +783,8 @@ $script:Result.starFailed = $starFailed
 $script:Result.ok = ($addFailed.Count -eq 0 -and $starFailed -eq 0)
 
 Write-JoyEvent @{ evt = 'progress'; phase = 'done'; done = 5; total = 5 }
-Write-JoyLog ("summary: scanned={0} added={1} unread {2}->{3} starred={4} skipped={5} listFailed={6}" -f `
-  $records.Count, $addedOk, $unreadCount, $totalUnreadAfter, $script:Result.starred, $starSkipped, $addFailed.Count)
+Write-JoyLog ("summary: scanned={0} added={1} unread {2}->{3} starred={4} skipped={5} listFailed={6} starRollbackFailed={7}" -f `
+  $records.Count, $addedOk, $unreadCount, $totalUnreadAfter, $script:Result.starred, $starSkipped, $addFailed.Count, $script:Result.starRollbackFailed)
 
 $exitCode = 0
 if (-not $script:Result.ok) { $exitCode = 5 }

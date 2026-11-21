@@ -2,12 +2,12 @@
 
 | 项目 | 内容 |
 |---|---|
-| 文档版本 | 1.3（同步实际实现的开关与队列口径） |
-| 更新日期 | 2026-11-20 |
-| 状态 | v1.0 的 Q1–Q10 继续有效；v1.1 新增 FR-13 / FR-14、改写 FR-5 / FR-6、新增第 11 节；v1.2 为 FR-14 补充代理能力；v1.3 按实际实现修正干跑开关命名（`-DryRun` / `-NoWrite` 等，不存在 `-NoPublish`）、明确队列不持久化（GitHub Lists 为唯一状态源） |
+| 文档版本 | 1.5（增加跨进程工作流互斥） |
+| 更新日期 | 2026-11-21 |
+| 状态 | v1.0 的 Q1–Q10 继续有效；v1.1 新增 FR-13 / FR-14、改写 FR-5 / FR-6、新增第 11 节；v1.2 为 FR-14 补充代理能力；v1.3 按实际实现修正干跑开关并明确队列不持久化；v1.4 明确 Star List 成员约束；v1.5 增加跨进程工作流锁 |
 | 对应实现 | M1–M4c 已实现并上线：`joy.bat`、`scan.bat`、`run-joy.bat`、`service/`、`scripts/{scan,read,render,publish,migrate,status,probe-lists}.ps1` |
 | 依据 | `MEMORY.md`（2026-11-18 需求原文与技术核实）、`AGENTS.md`（工程约定） |
-| 相关文档 | `DESIGN.md`（实现设计 v1.3）、`RUNBOOK.md`（操作手册 v1.3） |
+| 相关文档 | `DESIGN.md`（实现设计 v1.5）、`RUNBOOK.md`（操作手册 v1.5） |
 
 > 本文回答「为什么做、做什么、做到什么算完成」，不含具体命令与实现细节。
 > 文中「已确认（2026-11-19）」标记的条目来自需求方拍板；第 10 节是完整决策记录。若 `DESIGN.md` 阶段发现某项不可行，回来改本文件并升版本。
@@ -171,11 +171,14 @@ GitHub Joy 把这件事做成一条流水线：
 
 - 启动时查询用户的 Lists，按配置名（默认 `unread` / `read`）匹配；不存在则 `createUserList` 创建；
 - 新条目通过 `updateUserListsForItem` 加入 `unread`；
+- 若本轮新建 star 成功、但加入 `unread` 失败，则尝试撤销本轮新建的 star；若仓库原本已 star（PUT 返回 304），不得 unstar；补偿失败必须记录并标记本轮部分失败；
 - **幂等**：写入前以 API 查询结果为准确认是否已在目标 List，不依赖本地状态猜测；
 - 单条失败不中断整轮：记录失败清单，最后汇总，支持 `-OnlyId` / `-IdsFile` 重试；
 - 默认 **star**（已确认 2026-11-19）：加入 `unread` 时对条目执行 star；`-NoStar` 或 `config.star_on_add=false` 可关闭；star 已存在时不重复调用；
 - **Star List 只保留已 star 的仓库**（2026-11-19 实测）：未 star 就写 List，条目会在之后被 GitHub 清除。因此顺序必须是「**先 star，再写 List**」；`-NoStar` 时跳过 List 写入并告警，不做「加进去但没 star」的假成功；
-- **不做**破坏性动作：不重命名 List、不删除 List、不移除用户手工加入的其他条目；
+- **成员关系约束（2026-11-21）**：本工具管理的 `unread` / `read` 条目不加入其它 Star List。迁移使用整体替换语义，将成员集合直接设为 `[read]`，不遍历或保留其它 List 成员；用户不得手工把这两个 List 中的仓库加入其它 List，否则后续迁移可能移除该额外归属；
+- 扫描只对 `unread` / `read` 做常规成员查询。候选仓库的 star 状态若查询失败或未知，则遍历 Lists 核实这些未知仓库；若已属于其它 List，按已收藏处理并跳过，若未属于任何 List 才继续 star + 加入 unread；核实失败时本轮失败关闭，不执行相关写入；
+- 不重命名或删除 List；
 - List 权限/作用域不足时给出明确修复提示（见 9. 约束与假设）。
 
 **验收**：首次运行创建两个 List；同一批条目在扫描、阅读各跑两次的情况下，第二次的 GraphQL mutation 次数为 0；从网页手工把一个项目加进 unread，本地队列不受影响。
@@ -244,7 +247,7 @@ GitHub Joy 把这件事做成一条流水线：
 - 触发条件（已确认 2026-11-19）：**总结成功 + 页面已生成 + 发布成功**，三者齐备才迁移；发布失败时项目留在 `unread`，摘要保留，不重复计费；
 - 不执行 publish/migrate（如只跑 `read.ps1`）时本轮不迁移，收藏夹不变；
 - **补发与补迁移**：下次正常运行时，migrate 只处理「`reports-index` 中 published 且仍在 unread List」的条目；补发重跑 `render.ps1` + `publish.ps1`，补迁移重跑 `migrate.ps1`（各环节幂等，无 `-Repair` 一键开关）；
-- 迁移步骤：单次 `updateUserListsForItem`（unread → read + 保留其它 List）；失败条目留在 unread，下次补偿；
+- 迁移步骤：单次 `updateUserListsForItem`，目标成员集合为 `[read]`；这是基于「unread 条目不属于其它 List」的项目约束，**不保留其它 List 成员**；失败条目留在 unread，下次补偿；
 - 迁移前写快照 `data/state/lists-<RunId>.json`（迁移前后 unread/read 条目清单），支持 `-Rollback <RunId>`；
 - 幂等：`read` 已包含该条目时只做移除；条目不在 `unread` 时跳过并记录；
 - 单条迁移失败不影响其他条目：该条保持可重试状态，重跑只补迁移，不重复调用模型。
@@ -277,12 +280,12 @@ GitHub Joy 把这件事做成一条流水线：
   - `scan.bat`：无界面扫描，供排障或批处理使用；
   - `run-joy.bat`：无界面阅读（透传 `read.ps1` 的 `-N` / `-OnlyId` / `-IdsFile` / `-Lite` / `-DryRun` / `-NoWrite` / `-NoLlm` / `-Force`，见 FR-4）；
 - bat 只是薄封装：检查 Node / `gh` / `gh.json` / `llm.json` 与 PowerShell 执行策略 → 调 `.ps1` 或 Node → 透传退出码；
-- 并发控制：扫描（无论来自控制台还是 `scan.bat`）共用一把文件锁，同一时间只允许一个实例，第二个提示后退出；
+- 并发控制：所有会改动共享数据、Git 工作区或 GitHub Lists 的流程共用 `data/locks/workflow.lock.json` 跨进程工作流租约；控制台阅读流水线从 read 持锁到 migrate 完成，独立 bat/PowerShell 入口必须申请同一把锁；冲突时提示并退出，不允许绕过；失效 owner 依据 PID 与进程启动时间回收；
 - 日志：`logs/scan-<yyyy-MM-dd>.log`、`logs/read-<yyyyMMdd-HHmmss>.log`，控制台任务日志同时可在线查看；
 - **不实现**：Actions workflow、Windows 任务计划、常驻服务、开机自启；RUNBOOK 中给出「将来如何加调度」的说明；
 - 若将来加调度，仍保持文件锁与「同一时间只跑一个 scan」的约束。
 
-**验收**：三个入口都能跑通且统计一致；控制台点「立即扫描」时再双击 `scan.bat`，后者被文件锁拦下；`run-joy.bat` 无参数进入交互输入、有参数直接执行；退出码与对应脚本一致。
+**验收**：三个入口都能跑通且统计一致；扫描或控制台完整阅读流水线运行期间启动任一独立写操作脚本，后者被工作流锁拦下；脚本崩溃后锁能识别失效 owner 并恢复；`run-joy.bat` 无参数进入交互输入、有参数直接执行；退出码与对应脚本一致。
 
 ### FR-10 配置与密钥
 
@@ -549,3 +552,5 @@ GitHub Joy 把这件事做成一条流水线：
 | 2026-11-19 | 1.1 | 需求变更：新增本地控制台 FR-13（Node 标准库服务、127.0.0.1、令牌与 Host 校验）、GitHub CLI 集成 FR-14；改写 FR-5（overview + Q&A）与 FR-6（卡片顺序）；新增第 11 节账号风险与合规评估；补充 Q11–Q14 |
 | 2026-11-19 | 1.2 | 代理支持：FR-14 增加代理配置与自动探测；第 9 节记录「gh 不读系统代理」约束；实测 `github.com:443` 直连超时、代理 200 |
 | 2026-11-20 | 1.3 | 按实际实现同步文档：干跑开关统一为实际存在的 `-DryRun` / `-NoWrite` / `-NoLlm` / `-NoPush` / `-NoStar`（`-NoPublish` / `-NoMark` / `-Repair` 未实现，文中移除）；明确队列不跨轮持久化、GitHub Lists 为唯一状态源；`run-joy.bat` 只做阅读（发布/迁移由控制台流水线或手动脚本完成）；概览统计改由 summaries / reports-index 派生；报告底部移除从未实现的「失败项与原因」区块（DESIGN D17） |
+| 2026-11-21 | 1.4 | 明确 `unread` / `read` 条目不加入其它 Star List；迁移目标直接设为 `[read]`，不遍历所有 List；扫描只在候选 star 状态未知时遍历成员关系；新 star 后加入 unread 失败时补偿 unstar；未知状态无法核实时安全中止 |
+| 2026-11-21 | 1.5 | FR-9 并发控制扩展为跨进程全局工作流锁：覆盖控制台与独立 bat/PowerShell 入口，read→render→publish→migrate 持锁贯穿；失效 owner 可恢复，冲突返回 workflow_busy / 退出码 6 |

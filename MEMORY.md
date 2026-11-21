@@ -366,3 +366,17 @@ M3a 模型配置（2026-11-19）：
 - 实测：修复后点登录 2 秒内拿到设备码，说明连通性恢复。
 
 待确认：无。Q11–Q14 已于同日确认：页面提供「阅读 n 个」、`gh` 优先 + PAT 兜底、`llm.json` 明文 + ACL、Q&A 3–6 自适应。
+
+2026-11-21 · Lists 成员查询优化决策：
+- 用户确认项目不把 `unread` / `read` 中的仓库加入其它 Star List；迁移时不再遍历所有 List 成员，直接以 `[read]` 作为 `updateUserListsForItem` 的目标集合。
+- 扫描常规路径只查询 unread/read 成员。star 查询返回未知的候选才触发全 List 成员核对；若候选已在其它 List 则按已收藏跳过，核对失败或分页不完整时该轮安全失败，不对未知候选做写入。
+- REQUIREMENTS / DESIGN / RUNBOOK 升为 v1.4；README / AGENTS 同步版本。
+- 实现：`Get-JoyLists` 支持目录分页并在达到上限时失败；常规扫描只读取 unread/read 成员，`Get-JoyStarredMap` 精确返回未知仓库，未知时才补查其它 Lists，补查失败时在任何 List 写入前中止；迁移移除逐 List 成员遍历，目标集合直接为 `[read]`。
+- 实测（本机）：相关 PowerShell 脚本 Parser 通过；scan DryRun 查询 unread/read（74 / 12 项）、star 查询无 unknown fallback、计划 25 条且未写远端；migrate DryRun 正常（无待迁移项）；模拟测试覆盖 unknown-star 返回、Lists 目录翻页和成员分页上限失败关闭；未执行真实 List mutation。
+- star/List 补偿：新 star 后 node ID 获取失败时撤销本轮 star；unread mutation 报错时先复查 unread，已加入则按成功处理，确认未加入才撤销本轮 star；304 原有 star 不撤销。复查不确定记 `listStateUnknown`，DELETE 失败记 `starRollbackFailed` 并包含在 `listAddFailed`。
+
+2026-11-21 · 跨进程工作流锁实现（REQUIREMENTS / DESIGN / RUNBOOK v1.5）：
+- 新增 `data/locks/workflow.lock.json` 全局租约。Node 服务在 scan 或 read→render→publish→migrate 整条流水线持锁；写操作 PowerShell 入口也自行申请/校验，独立 bat 不能绕过服务单任务槽并发改 Lists、state、reports 或 git 工作区。
+- Node 将随机租约 token 通过子进程环境传给流水线子脚本；子脚本只验证、不释放该租约。独立脚本自己持有并在正常退出时释放。
+- 记录 owner PID/启动时间与 Node 活跃 child PID；owner/child 确认退出后再原子回收，损坏锁不按年龄盲删。冲突退出码 6 / 服务 API 409 `workflow_busy`。
+- 实测：所有接入脚本 PowerShell Parser 通过；锁 helper 验证 owner 获取、跨进程 token join、独立竞争被拒、stale owner 回收与正常释放；scan/read/publish/migrate DryRun 均正常并释放锁。尚未做 Node 服务 + 外部 bat 联调、取消/强杀后的真实进程树回收；已有服务 PID 28404 保持运行，未重启或中断。

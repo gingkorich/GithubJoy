@@ -2,11 +2,11 @@
 
 | 项目 | 内容 |
 |---|---|
-| 文档版本 | 1.3（与 `REQUIREMENTS.md` v1.3 对应） |
-| 更新日期 | 2026-11-20 |
+| 文档版本 | 1.5（与 `REQUIREMENTS.md` v1.5 对应） |
+| 更新日期 | 2026-11-21 |
 | 对应实现 | `D:\AIproject\GithubJoy`（M1–M4c 已实现并上线；目录结构按实际文件修正，`jobs.js` / `state.js` / `html.ps1` / `self-test.ps1` 均并入/未建，见第 15 节 D14+） |
 | 上游文档 | [`REQUIREMENTS.md`](REQUIREMENTS.md)（FR-1～FR-14、AC-1～AC-14） |
-| 下游文档 | `RUNBOOK.md`（操作手册 v1.3） |
+| 下游文档 | `RUNBOOK.md`（操作手册 v1.5） |
 
 > 本文回答「怎么做」：模块边界、数据模型、接口契约、算法、失败处理。
 > 凡是需求未覆盖而这里新增的决定，都在第 15 节「与需求的偏差」登记，并注明理由。
@@ -20,7 +20,7 @@
 │  joy.bat   │ ─────────▶ │ Node 本地服务 (127.0.0.1:8787)│
 └────────────┘            │  · 静态页面 service/public    │
                           │  · JSON API /api/*            │
-                          │  · 任务调度（单飞 + 文件锁）   │
+                           │  · 全局工作流租约 + 任务单飞   │
                           └───────┬──────────────┬────────┘
                                   │ spawn        │ spawn
                                   ▼              ▼
@@ -61,7 +61,7 @@ D:\AIproject\GithubJoy\
 ├─ gh.json                     # PAT + List 名 + 发布信息（gitignore）
 ├─ llm.json                    # 模型配置（gitignore，保存后 icacls 收紧）
 ├─ service/
-│  ├─ server.js                # HTTP 服务、路由、安全校验、任务状态机/单飞锁/子进程管理（仅标准库，单文件）
+│  ├─ server.js                # HTTP 服务、路由、安全校验、任务状态机/工作流租约/子进程管理（仅标准库，单文件）
 │  └─ public/
 │     ├─ index.html
 │     ├─ app.js
@@ -80,6 +80,7 @@ D:\AIproject\GithubJoy\
 │  │  ├─ http.ps1              # 超时 / 重试 / 退避 / 错误详情
 │  │  ├─ github.ps1            # 认证解析、REST、GraphQL、raw
 │  │  ├─ llm.ps1               # 模型调用、JSON 修复
+│  │  ├─ lock.ps1              # 全局工作流租约申请、token 校验与释放
 │  │  └─ log.ps1               # 日志与脱敏（转义/渲染逻辑在 render.ps1 内，未单独建 html.ps1）
 │  └─ prompts/
 │     ├─ summarize.system.txt
@@ -95,7 +96,7 @@ D:\AIproject\GithubJoy\
 │  ├─ summaries/<owner>__<repo>.json
 │  ├─ jobs/<jobId>.json
 │  ├─ state/lists-<RunId>.json
-│  ├─ locks/scan.lock
+│  ├─ locks/workflow.lock.json # 全局工作流租约（原子创建，owner/token）
 │  ├─ service.json             # pid / port / startedAt
 │  └─ service-token            # 每次启动重新生成
 ├─ reports/                    # 本地产物（gitignore）
@@ -161,7 +162,7 @@ D:\AIproject\GithubJoy\
 - `seq` 单调递增，**仅在本轮草稿内用于展示与镜像顺序**；「当前顺序」的唯一依据是 **unread List 的实际顺序**（GitHub 维护，见第 4.3 节）。
 - 队列不跨轮持久化：read 开始 reset、`-DryRun`/`-NoWrite` 不落盘、结束清空；`published` / `publishedUrl` / `movedAt` 等字段是运行期镜像信息，跨轮状态以 `data/summaries/`（渲染）与 `data/reports-index.json`（发布）为准。
 - `status` 取值与流转见 3.6。
-- `otherListIds` 用于迁移时保留用户手工加的其它 List（见 5.4）。
+- `otherListIds` 是旧数据/运行期兼容字段；按 v1.4 成员关系约束，新建条目与迁移均不依赖它。
 
 ### 3.2 `data/trending-YYYY-MM-DD.json`
 
@@ -275,9 +276,10 @@ D:\AIproject\GithubJoy\
 4. 校验：任一周期 totalCount=0 或 items=0 → 本轮失败，不写快照、不覆盖旧文件
 5. 写 data/trending-<date>.json
 6. 合并去重 → 过滤 → 候选（4.2 / 4.3）
-7. 查询 Lists（unread / read 全量翻页）建立 fullName → listIds 索引
-8. 新条目：star（受 4.4 限制）→ 加入 unread（替换语义，4.5）；**不写本地队列**
-9. 写 state.lastScan 与 jobs/<id>.json，打印统计
+7. 查询 `unread` / `read` 成员，过滤已处理仓库；批量查询候选 star 状态
+8. star 状态未知时才遍历所有 List 的成员；若无法完整核实则本轮安全失败
+9. 新条目：star（受 4.4 限制）→ 加入 unread（替换语义，4.5）；**不写本地队列**
+10. 写 state.lastScan 与 jobs/<id>.json，打印统计
 ```
 
 ### 4.2 查询构造
@@ -335,6 +337,7 @@ newItems 按 seq 升序：
 
 - star 失败不是致命错误：该条**跳过 List 写入**（`inUnread=false`、记录 `lastError`），下轮扫描会重新发现它并补「star + List」。
 - 补 star 无专门开关（`-RepairStar` 未实现），依赖下轮扫描自然补做。
+- 已新 star 但拿不到仓库 node ID 时，DELETE star 作为补偿；仅对本轮实际创建的 star 执行，304（原本已 star）绝不撤销。unread mutation 返回失败时先重新读取 unread：成员已存在则按成功处理；确认不存在才撤销本轮新 star；无法核实则保留 star 并记 `listStateUnknown`。DELETE 失败记 `starRollbackFailed` 与 `listAddFailed`，不能宣称已恢复。
 
 ### 4.5 Lists 写入（语义已按官方 schema 核实）
 
@@ -349,11 +352,11 @@ mutation AddToUnread($itemId: ID!, $listIds: [ID!]!) {
 
 **关键**：该 mutation 是「设置该条目所属的 List 集合」——**整体替换**。`itemId` 是仓库的 node ID（schema 中 `union UserListItems = Repository`）。
 
-所以 `listIds` 必须 = `unread` + 该条目当前所属的其它 List；否则会清掉用户手工归类。
+`updateUserListsForItem` 是整体替换，因此任何调用都必须知道完整目标成员集合。项目约束为：`unread` / `read` 中的仓库不会被加入其它 List；常规扫描只选 star=false 的仓库，所以新条目预期不属于其它 List。候选 star 状态未知时，扫描先核实其是否已属于任意 List：若是则按已收藏跳过；若核实不完整则不执行写入。
 
 **实测约束（2026-11-19）**：Star Lists **只保留已 star 的仓库**。用 `-NoStar` 先写 List，5 个条目在约 1 小时后从 `unread` 消失（40 → 35），且这 5 个 `viewerHasStarred=false`；剩余 35 个全部为 true。因此流程固定为「**先 star，再写 List**」，`-NoStar` 时跳过 List 写入并告警；未写入 List 的条目在下次扫描时经 star 过滤自然重新入选。
 
-读取成员关系的高效做法（每次扫描只做一次）：
+Lists 目录查询（用于定位 `unread` / `read`）支持分页；常规扫描只读取这两个 List 的成员。只有 star 状态未知的候选，才执行下述全 List 成员核对：
 
 ```graphql
 query ListIndex($cursor: String) {
@@ -372,9 +375,9 @@ query ListIndex($cursor: String) {
 }
 ```
 
-- 外层遍历所有 List，内层翻页直到 `hasNextPage=false`；
-- 建立 `nameWithOwner(lower) → [listId…]`；
-- List 名冲突（重名）时取 `createdAt` 最早的一个并写 `warnings`；
+- 外层遍历所有 List，内层翻页直到 `hasNextPage=false`；任何查询失败或分页上限仍有下一页时视为核对失败，不对未知候选做写操作；
+- 只为 star 状态未知的候选核实成员关系；若候选已在其它 List，按已收藏跳过；
+- List 名冲突（重名）时取第一个匹配项并写 `warnings`；
 - 未找到 `unread`/`read` 时各创建一次（`createUserList`），创建结果写日志，不删除任何已有 List。
 
 ### 4.6 统计（日志与 state 用同一份数字）
@@ -466,18 +469,19 @@ mutation MoveToList($itemId: ID!, $target: [ID!]!) {
     lists { id name }
   }
 }
-# $target = (该条目当前所属 List − unread) + read
+# 项目约束：unread 条目不属于其它 List；$target = [read]
 ```
 
-- **一次调用**完成「移出 unread + 加入 read」，比「先删后加」少一个中间态；但因为是替换语义，`$target` 必须包含其它 List。
+- **一次调用**完成「移出 unread + 加入 read」。依据项目成员关系约束，目标集合直接为 `[read]`；迁移不遍历其它 List。若用户手工违反约束、把 unread 项目加入其它 List，该额外归属会被整体替换移除。
 - 迁移前写 `data/state/lists-<RunId>.json`：
 
 ```json
 { "runId": "read-20261119-203001", "capturedAt": "…",
-  "unread": ["owner/a", "owner/b"], "read": ["owner/c"], "lists": [{"id":"L_1","name":"unread"}] }
+  "unread": ["owner/a", "owner/b"], "read": ["owner/c"],
+  "assumption": "unread items have no memberships outside unread/read" }
 ```
 
-- `-Rollback <RunId>`：按快照把 `moved` 条目的 `listIds` 恢复为「unread + 其它」，状态改回 `done`；`published` 保持 true，避免重复发布。
+- `-Rollback <RunId>`：按快照把 `moved` 条目的成员集合恢复为 `[unread]`，状态改回 `done`；`published` 保持 true，避免重复发布。该回滚同样依赖上述成员关系约束。
 - 单条失败：`lastError` 记录，条目保持「published 且仍在 unread」，下次 migrate 或正常运行时补迁移；**不重复调用 LLM**。
 - 迁移顺序：按 `seq` 升序逐条，间隔 300ms；整批失败率 >50% 时中止并提示（可能是 scope 或限额问题）。
 
@@ -520,7 +524,7 @@ server.listen(port, '127.0.0.1', () => {
 ```
 
 - 端口：默认 8787 → 8788 → 8789 → 8790；全被占用则 `console.error` + `exit(4)`。
-- 退出：`SIGINT` / 窗口关闭 → 结束子进程（杀 job 的 pid）→ 删除 `data/service.json` 与 `data/locks/*.lock`。
+- 退出：`SIGINT` / 窗口关闭 → 同步结束当前子进程树 → 删除 `data/service.json`；若进程被强杀，下一位申请者依据 owner PID + 进程启动时间回收失效工作流租约。
 - `joy.bat --stop`：读 `service.json` → `taskkill /PID <pid> /T /F` → 失败则清理文件并提示「服务未在运行」。
 - 只绑 `127.0.0.1`（`server.listen(port, '127.0.0.1')`），不提供局域网访问。
 
@@ -565,9 +569,10 @@ server.listen(port, '127.0.0.1', () => {
 
 ### 6.3 任务运行器
 
-- 单飞：`data/locks/<kind>.lock`（内容 `{pid, jobId, startedAt}`）。启动任务前：
-  - 锁存在且 pid 存活 → `409 busy`；
-  - 锁存在但 pid 已死 → 视为残留，删除后继续（写日志）。
+- 全局互斥：`data/locks/workflow.lock.json`，由 `CreateNew` / `open('wx')` 原子创建，记录 `{version,token,ownerPid,ownerStartedAt,activeChildPid,kind,acquiredAt}`。
+- PowerShell 独立入口（scan/read/render/publish/migrate/cleanup）都在工作前申请同一租约；已有租约且 owner 或 active child 仍存活 → 退出码 6（服务 API 返回 `409 workflow_busy`）；owner PID 已退出或 PID 被复用（启动时间不匹配）→ 原子移走残留租约并重试。
+- 控制台 `/api/read` 在启动 read 前申请租约，并持有**同一 token**贯穿 render → publish → migrate；子脚本通过 `JOY_WORKFLOW_LOCK_TOKEN` 验证后加入该工作流，不独立释放。扫描和手动单阶段服务任务同样由 Node 申请租约并传给 PowerShell。
+- 锁只负责互斥，不是安全边界；token 不写日志或任务 JSON。释放时仅删除 token 匹配的租约。被强杀时租约留存，由后续入口核实 owner / active child 进程后回收；不按锁文件年龄盲删。
 - 启动：
 
 ```
@@ -715,6 +720,7 @@ function ConvertTo-HtmlText([string]$s) {
 | 3 | 发布失败 | 分叉、无写权限、分支保护 |
 | 4 | 服务启动失败 | 端口全占用、Node 版本过低 |
 | 5 | 部分成功 | n 条里部分失败（页面照常生成） |
+| 6 | 工作流繁忙 | 另一进程持有 `data/locks/workflow.lock.json` |
 
 ### 8.2 HTTP 重试矩阵
 
@@ -745,6 +751,7 @@ function ConvertTo-HtmlText([string]$s) {
 | 磁盘写满 / 权限 | 中止本轮，保留已写文件；退出码 1，页面显示错误原文 |
 | git 未配置 user.name/email | 提示具体命令（`git config --local user.name …`），不自动改全局配置 |
 | 发布时本地分叉 | 中止（退出码 3），提示手工处理；**不** `reset`/`rebase` |
+| 全局工作流锁已持有 | 返回/退出 `workflow_busy`；不启动子进程、不写远端 |
 | 网络直连失败（`wsarecv` / `connection attempt failed` / 超时） | 登录任务置 `failed` 并给 `hint=network`；页面提示检查 `config.network.proxy` 或系统代理（RUNBOOK 6.11） |
 | 页面轮询时任务已结束 | 返回终态 + `result`，前端停止轮询 |
 
@@ -843,7 +850,7 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 | 阶段 | 请求数 | 备注 |
 |---|---|---|
 | 扫描：Search | 3 | 认证 30 次/分钟，占 10% |
-| 扫描：List 索引 | 1–10 | List 数 × 每 List 页数；1000 条以内通常 ≤3 |
+| 扫描：List 成员 | 通常只读 unread/read；仅 star 未知时读所有 List | fallback 失败或分页不完整时中止未知候选写入 |
 | 扫描：加 unread | 新增条数（≤约 75） | 每条 1 次 mutation |
 | 扫描：star | ≤25 | 每条 1 次 REST |
 | 阅读：每条 | 4–8 | repo + readme + tree + 3–5 contents |
@@ -908,9 +915,9 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 | # | 风险 | 影响 | 现状 | 缓解 / 验证计划 |
 |---|---|---|---|---|
 | R1 | `gh auth login --web` 在无 TTY 的子进程中可能改变输出或等待 stdin | 点「登录」后卡住 | ✅ **已实测（2026-11-19，gh 2.103.3）**：非 TTY 下直接输出 `! One-time code (XXXX-XXXX) copied to clipboard` 与 device URL，不等待回车，代码可稳定解析；`taskkill /T` 取消有效 | 保留 stdin 换行兜底与 5 分钟超时；授权完成后的 scope 行为仍待 R2 |
-| R2 | Lists 写入需要 `user` scope，`--scopes "user"` 为追加语义 | 登录成功但写入失败 | ✅ **读取与写入均已实测（2026-11-19）**：scope 为 `gist, read:org, repo, user`；13 个 List 可读；成功创建 `read` 并把 5 个条目加入 `unread`，失败 0 | 多 List 合并（R3）仍需一条「已属其它 List」的真实样本验证 |
-| R3 | `updateUserListsForItem` 是**整体替换** | 可能清掉用户手工归类 | **已从 schema 确认** | 写入前合并 `otherListIds`（scan/migrate 均已实现） |
-| R4 | List 索引随使用增长（数百到上千条） | 扫描变慢、GraphQL 点数上升 | 未知 | 索引缓存到 `data/list-index.json`（TTL 10 分钟）；超过 2000 条时提示 |
+| R2 | Lists 写入需要 `user` scope，`--scopes "user"` 为追加语义 | 登录成功但写入失败 | ✅ **读取与写入均已实测（2026-11-19）**：scope 为 `gist, read:org, repo, user`；13 个 List 可读；成功创建 `read` 并把 5 个条目加入 `unread`，失败 0 | v1.4 后未知-star fallback 需用模拟失败响应验证；迁移依赖 unread/read 成员关系约束 |
+| R3 | `updateUserListsForItem` 是**整体替换** | 可能清掉其它 List 归属 | **已从 schema 确认** | 项目约束 unread/read 项目不加入其它 List；扫描仅对 star 未知候选全量核对，核对失败关闭；迁移目标 `[read]` |
+| R4 | Lists 数量或成员数增长 | 查询变慢 / 分页上限 | 未知 | Lists 目录与成员分页均检查 `hasNextPage`；达到实现上限仍有下一页时失败关闭，不得按完整结果写入 |
 | R5 | Search 口径不含「老仓库突然爆火」 | 漏项目 | 已知（Q3 取舍） | 页面与日志标注 `source=search`；后续可选增加 Trending 页兜底（需改需求） |
 | R6 | PowerShell 5.1 编码问题 | 中文乱码、JSON 解析失败 | 已知坑 | `.ps1` 纯 ASCII；JSON UTF-8 无 BOM；`Invoke-RestMethod` 结果按字节还原 |
 | R7 | 端口 8787–8790 全被占用 | 起不来 | 低概率 | 明确报错 + 提示 `-Port` |
@@ -918,7 +925,8 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 | R9 | git 未配身份 / 分支保护 / 远端分叉 | 发布失败 | 常见 | 预检 + 可执行建议；绝不 force push |
 | R10 | Pages 构建延迟或缓存 | 「已推送」但页面未更新 | 低 | 文案用「已推送」；不轮询 Pages 状态 |
 | R11 | `icacls` 在非 NTFS 或受限账户失败 | 密钥权限未收紧 | 低 | 只警告，不阻断 |
-| R12 | 回滚只覆盖清单，不恢复「条目在其它 List 的成员关系」 | 回滚不完整 | 中 | 快照记录 `listIds`（不只 unread/read），回滚按快照重放 |
+| R12 | 用户手工把 unread 条目加入其它 List | 迁移可能移除额外归属；回滚也不恢复该归属 | 已确认该操作不属于支持场景 | 文档明确成员关系约束；`unread` / `read` 项目不得额外加入其它 List |
+| R13 | Lists mutation / 状态核实 / star 补偿失败 | 可能留下已 star 但不在 unread 的项目，后续扫描可能跳过 | 未知 | mutation 报错后先核实 unread；确认不存在才回滚本轮新 star；核实或回滚失败都显式记录，304 原有 star 不撤销 |
 
 ---
 
@@ -943,7 +951,7 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 
 | # | 设计做法 | 需求原文 | 理由 |
 |---|---|---|---|
-| D1 | 迁移用**单次** `updateUserListsForItem`（替换 `listIds`） | FR-7 写「从 unread 移除 → 加入 read」 | schema 语义为整体替换，一次调用等效，少一个失败窗口；需合并其它 List 防误删 |
+| D1 | 迁移用**单次** `updateUserListsForItem`，目标集合 `[read]` | FR-7 写「从 unread 移除 → 加入 read」 | 单次调用等效且少一个失败窗口；依赖 unread 条目不属于其它 List 的项目约束 |
 | D2 | 发布「无 diff」视为成功 | FR-8「push 成功」 | 重跑不应因无可提交内容而失败 |
 | D3 | gh 状态与 unread/read 数量：**首次加载同步探测一次，此后 60 秒后台定时刷新**，请求永远读缓存（过期返旧值 + 触发后台刷新）；任务/登录结束主动置脏 | FR-13 要求展示，未定刷新频率 | 轮询请求（3 秒一次）不再同步 spawn `gh`/PowerShell 进程（冷启 1~3 秒），页面无周期性卡顿 |
 | D4 | 索引数据源为 `data/reports-index.json` | FR-6 只要求索引页 | 不反向解析 HTML，生成更稳 |
@@ -962,6 +970,9 @@ icacls llm.json /inheritance:r /grant:r "$env:USERNAME:(F)"
 | D17 | 报告不渲染「失败项与原因」区块：删除模板 `{{FAILED}}` 占位与恒空填充代码（2026-11-20） | FR-5 原要求报告底部展示失败项 | 失败项从未实现渲染；失败明细已在 `data/jobs/<id>.json`（items[].error）与日志中完整可查，报告只承载成功总结 |
 | D18 | gh 状态与 lists 探测改为「后台 60 秒定时刷新 + 过期返旧值」：`/api/status` 轮询不再同步等待子进程；任务/登录结束调用 `invalidateGh()/invalidateLists()` 置脏并立即后台刷新；未登录时跳过 lists 探测（2026-11-20） | 原设计 30 秒缓存过期后由请求同步触发 PowerShell 探测 | 轮询响应从偶发 1~45 秒卡顿变为毫秒级；子进程创建降到每 60 秒一次且在后台 |
 | D19 | read 增加材料缓存：截断后的 README/目录树/关键文件存 `data/materials/<owner>__<repo>.json`（TTL 24 小时，deep 缓存可服务 lite 运行、反之重抓）；`-Refresh` 强制重新抓取；`-DryRun`/`-NoWrite` 不写缓存；`cleanup.ps1` 按 `retention.materialDays`（默认 30 天）清理（2026-11-20） | 需求未列（原「有缓存计划」未落地） | LLM 失败重试与 `-Force` 重做不再重复抓取（省时 + 省 GitHub 配额）；单条约 35~75 KB，量级可控 |
+| D20 | 扫描常规路径只查询 unread/read；star 状态未知时才全 List 核对，已在其它 List 的候选按已收藏跳过；迁移不遍历成员，直接设置 `[read]` | FR-3/FR-7 原有保留任意其它 List 成员的泛化表述 | 用户确认实际约束：unread/read 条目不加入其它 List；降低 GraphQL 查询量。未知成员关系无法完整核实时安全中止 |
+| D21 | 新建 star 后 unread 写入失败时先核实成员状态；确认不存在再 DELETE 本轮 star；仅撤销本轮真实创建的 star，304 不撤销 | FR-3 要求加入 unread；未规定 star/List 双写部分失败补偿 | 避免已成功的 List mutation 因响应丢失而被补偿误撤销；处理 newly-starred 孤儿；核实/补偿失败时显式记录 |
+| D22 | `data/locks/workflow.lock.json` 跨进程全局租约；控制台 read→render→publish→migrate 持同一 token，独立脚本必须申请或加入租约；owner/active-child PID 与启动时间用于识别残留，损坏租约不自动盲删 | FR-9 只要求 scan 互斥，原单飞只覆盖 Node 进程内 | 阻止控制台与 `scan.bat` / `run-joy.bat` / 手动 PowerShell 并发改共享状态或 git 工作区；强杀后可安全回收失效租约 |
 
 ---
 

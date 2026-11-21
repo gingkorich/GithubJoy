@@ -59,27 +59,38 @@ function Get-JoyViewer {
 function Get-JoyLists {
   param([string]$Token, [string]$Proxy)
   $q = @'
-query {
+query($cursor: String) {
   viewer {
-    lists(first: 50) {
+    lists(first: 50, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
       nodes { id name isPrivate items(first: 1) { totalCount } }
     }
   }
 }
 '@
-  $r = Invoke-JoyGraphQL -Token $Token -Query $q -Proxy $Proxy
-  if (-not $r.ok) { return @{ ok = $false; lists = @(); error = $r.error } }
   $out = @()
-  foreach ($n in @($r.data.viewer.lists.nodes)) {
-    if ($null -eq $n) { continue }
-    $out += [pscustomobject]@{
-      id = [string]$n.id
-      name = [string]$n.name
-      isPrivate = [bool]$n.isPrivate
-      itemCount = [int]$n.items.totalCount
+  $cursor = $null
+  for ($page = 0; $page -lt 100; $page++) {
+    $r = Invoke-JoyGraphQL -Token $Token -Query $q -Variables @{ cursor = $cursor } -Proxy $Proxy
+    if (-not $r.ok) { return @{ ok = $false; lists = @(); error = $r.error } }
+    $conn = $r.data.viewer.lists
+    foreach ($n in @($conn.nodes)) {
+      if ($null -eq $n) { continue }
+      $out += [pscustomobject]@{
+        id = [string]$n.id
+        name = [string]$n.name
+        isPrivate = [bool]$n.isPrivate
+        itemCount = [int]$n.items.totalCount
+      }
     }
+    if (-not $conn.pageInfo.hasNextPage) { return @{ ok = $true; lists = $out; error = $null } }
+    $next = [string]$conn.pageInfo.endCursor
+    if (-not $next -or $next -eq $cursor) {
+      return @{ ok = $false; lists = @(); error = 'lists_pagination_cursor_invalid' }
+    }
+    $cursor = $next
   }
-  return @{ ok = $true; lists = $out; error = $null }
+  return @{ ok = $false; lists = @(); error = 'lists_pagination_limit_exceeded' }
 }
 
 function Get-JoyListItems {
@@ -108,6 +119,9 @@ query($id: ID!, $cursor: String, $n: Int!) {
     }
     if (-not $conn.pageInfo.hasNextPage) { break }
     $cursor = [string]$conn.pageInfo.endCursor
+  }
+  if ($conn.pageInfo.hasNextPage) {
+    return @{ ok = $false; names = @(); error = 'list_items_pagination_limit_exceeded' }
   }
   return @{ ok = $true; names = $names.ToArray(); error = $null }
 }
@@ -197,24 +211,33 @@ function Add-JoyStar {
   return $r
 }
 
+function Remove-JoyStar {
+  param([string]$Token, [string]$FullName, [string]$Proxy)
+  $uri = 'https://api.github.com/user/starred/' + $FullName
+  $r = Invoke-JoyHttp -Method 'DELETE' -Uri $uri -Headers (New-JoyApiHeaders $Token) -Proxy $Proxy
+  if ($r.ok -or $r.status -eq 404) { return @{ ok = $true; status = $r.status; error = $null } }
+  return @{ ok = $false; status = $r.status; error = (($r.body + ' ' + $r.error).Trim()) }
+}
+
 function Get-JoyStarredMap {
   param([string]$Token, [string[]]$FullNames, [string]$Proxy)
 
   $map = @{}
-  $errors = 0
+  $unknown = New-Object System.Collections.Generic.List[string]
   $list = @($FullNames | Where-Object { $_ } | Sort-Object -Unique)
   for ($i = 0; $i -lt $list.Count; $i += 25) {
     $end = [Math]::Min($i + 24, $list.Count - 1)
     $chunk = @($list[$i..$end])
     $parts = @()
-    $n = 0
+    $queryNames = @()
     foreach ($full in $chunk) {
       $sp = ([string]$full) -split '/', 2
-      if ($sp.Count -lt 2) { $n++; continue }
+      if ($sp.Count -lt 2) { $unknown.Add([string]$full); continue }
       $owner = $sp[0] -replace '"', ''
       $name = $sp[1] -replace '"', ''
-      $parts += ('r' + $n + ': repository(owner: "' + $owner + '", name: "' + $name + '") { nameWithOwner viewerHasStarred }')
-      $n++
+      $alias = 'r' + $queryNames.Count
+      $parts += ($alias + ': repository(owner: "' + $owner + '", name: "' + $name + '") { nameWithOwner viewerHasStarred }')
+      $queryNames += [string]$full
     }
     if ($parts.Count -eq 0) { continue }
     $q = 'query { ' + ($parts -join ' ') + ' }'
@@ -228,18 +251,18 @@ function Get-JoyStarredMap {
       }
     }
     if (-not $r -or -not $r.ok) {
-      # count as unknown; caller will treat these as un-starred (idempotent PUT handles it)
-      $errors += $chunk.Count
+      # Preserve exact names so the caller can inspect their List memberships.
+      foreach ($full in $queryNames) { $unknown.Add([string]$full) }
       Write-JoyLog ("star filter batch failed after retry: " + [string]$r.error) 'WARN'
       continue
     }
-    for ($j = 0; $j -lt $n; $j++) {
+    for ($j = 0; $j -lt $queryNames.Count; $j++) {
       $node = $r.data.('r' + $j)
-      if ($null -eq $node) { continue }
+      if ($null -eq $node) { $unknown.Add([string]$queryNames[$j]); continue }
       if ([bool]$node.viewerHasStarred) { $map[[string]$node.nameWithOwner] = $true }
     }
   }
-  return @{ ok = ($errors -eq 0); map = $map; errors = $errors }
+  return @{ ok = ($unknown.Count -eq 0); map = $map; unknown = @($unknown.ToArray()); errors = $unknown.Count }
 }
 
 function Get-JoyRepoNodeId {
